@@ -5,15 +5,15 @@ Use a JSON file shaped like this:
 ```json
 {
   "mode": "create-and-configure",
-  "consoleUrl": "https://open.feishu.cn/app",
+  "consoleUrl": "https://open.larksuite.com",
   "appName": "My Automation App",
   "description": "Provisioned by Playwright",
   "scopes": [
     "im:message",
     "contact:user.base:readonly"
   ],
-  "profileDir": "./tmp/lark-console-profile",
-  "outputPath": "./tmp/lark-app-result.json",
+  "profileDir": "~/.lark-console/profile",
+  "outputPath": "~/.lark-console/result.json",
   "selectors": {
     "createAppButton": "button:has-text(\"Create App\")",
     "customAppMenuItem": "role=menuitem[name=/Custom App|自建应用/i]",
@@ -29,8 +29,10 @@ Use a JSON file shaped like this:
 
 Notes:
 
+- Default config location: `~/.lark-console/config.json`
 - `mode` supports `create-and-configure` and `update-scopes`.
 - `selectors` is optional. Add overrides only for the fields that changed.
 - Prefer stable `data-*` selectors when the console exposes them.
+- `profileDir` and `outputPath` may use `~/...`; the script expands them to the user's home directory.
 - Keep `profileDir` outside git-tracked paths.
 - If the page uses localized labels, selectors should allow both Chinese and English text.

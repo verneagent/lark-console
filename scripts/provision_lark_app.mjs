@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
+const DEFAULT_CONFIG_PATH = "~/.lark-console/config.json";
 const DEFAULT_SELECTORS = {
   createAppButton: 'button:has-text("Create App"), button:has-text("创建应用")',
   customAppMenuItem: 'role=menuitem[name=/Custom App|自建应用/i]',
@@ -17,7 +19,7 @@ const DEFAULT_SELECTORS = {
 };
 
 function parseArgs(argv) {
-  const args = { headed: false };
+  const args = { headed: false, config: DEFAULT_CONFIG_PATH };
   for (let i = 2; i < argv.length; i += 1) {
     const current = argv[i];
     if (current === "--headed") {
@@ -30,14 +32,24 @@ function parseArgs(argv) {
       continue;
     }
   }
-  if (!args.config) {
-    throw new Error("Missing required --config <path> argument");
-  }
   return args;
 }
 
+function expandUserPath(targetPath) {
+  if (!targetPath) {
+    return targetPath;
+  }
+  if (targetPath === "~") {
+    return os.homedir();
+  }
+  if (targetPath.startsWith("~/")) {
+    return path.join(os.homedir(), targetPath.slice(2));
+  }
+  return targetPath;
+}
+
 async function loadConfig(configPath) {
-  const absolutePath = path.resolve(configPath);
+  const absolutePath = path.resolve(expandUserPath(configPath));
   const raw = await fs.readFile(absolutePath, "utf8");
   const parsed = JSON.parse(raw);
   return {
@@ -153,7 +165,7 @@ async function maybeWriteOutput(config, result) {
   if (!config.outputPath) {
     return;
   }
-  const outputPath = path.resolve(config.outputPath);
+  const outputPath = path.resolve(expandUserPath(config.outputPath));
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, JSON.stringify(result, null, 2));
 }
@@ -164,7 +176,7 @@ async function main() {
   const { chromium } = await importPlaywright();
 
   const context = await chromium.launchPersistentContext(
-    path.resolve(config.profileDir ?? "./tmp/lark-console-profile"),
+    path.resolve(expandUserPath(config.profileDir ?? "~/.lark-console/profile")),
     { headless: !args.headed }
   );
 

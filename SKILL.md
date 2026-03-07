@@ -44,12 +44,22 @@ The default script expects a JSON config file with:
 
 See [references/config-schema.md](references/config-schema.md) for the shape.
 
+Default config path:
+
+- `~/.lark-console/config.json`
+
 ## Execution
 
 Install Playwright if needed, then run:
 
 ```bash
-node scripts/provision_lark_app.mjs --config ./app-config.json --headed
+node scripts/provision_lark_app.mjs --headed
+```
+
+Or override the config path explicitly:
+
+```bash
+node scripts/provision_lark_app.mjs --config ~/.lark-console/config.json --headed
 ```
 
 Useful patterns:
