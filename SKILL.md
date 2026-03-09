@@ -26,6 +26,13 @@ Use official OpenAPI where it exists. Use this skill only for console-only setup
 5. Run the script with a persistent Playwright profile so login and 2FA stay in the browser session.
 6. Verify the resulting app name, enabled scopes, and captured credentials in the UI.
 
+When the task involves console navigation details, scope cloning, or version publishing, read these references first:
+
+- [references/console-flow.md](references/console-flow.md)
+- [references/selector-notes.md](references/selector-notes.md)
+
+If a similar app-creation task has already been executed in this repo, also check the relevant sanitized case note under `references/`.
+
 ## Rules
 
 - Do not suggest bypassing authentication, anti-automation controls, or access checks.
@@ -75,3 +82,6 @@ Useful patterns:
 
 - `scripts/provision_lark_app.mjs`: Playwright automation entrypoint
 - `references/config-schema.md`: minimal config contract and selector override guidance
+- `references/console-flow.md`: console workflow map and fallback rules
+- `references/selector-notes.md`: UI structure notes and selector risks
+- `references/case-doceditor.md`: sanitized example of cloning and publishing an app
