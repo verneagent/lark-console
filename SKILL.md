@@ -11,6 +11,7 @@ Use this skill when the user wants to automate Lark or Feishu developer console 
 
 - create a self-built app
 - add or remove permission scopes
+- configure bot, event subscription, callback, or encryption settings
 - capture generated `App ID` and related metadata
 - turn a one-off console flow into a repeatable Playwright script
 
@@ -38,7 +39,9 @@ The default script expects a JSON config file with:
 
 - console URL
 - app name and optional description
+- optional existing app ID
 - scope list
+- optional bot, event, callback, and encryption settings
 - optional selectors override map
 - optional output path for captured metadata
 
@@ -64,9 +67,9 @@ node scripts/provision_lark_app.mjs --config ~/.lark-console/config.json --heade
 
 Useful patterns:
 
-- If the user is already logged in, keep `--profile-dir` stable across runs.
+- If the user is already logged in, keep `profileDir` stable across runs.
 - If selectors fail, open the page, inspect current labels, and update the config's `selectors` block instead of forking the script immediately.
-- If the task is only "add permissions to an existing app", set `mode` to `update-scopes`.
+- If the task is only "configure an existing app", set `mode` to `configure-existing` and provide `appId`.
 
 ## Files
 

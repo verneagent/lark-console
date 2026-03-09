@@ -6,6 +6,7 @@ Use it when the desired workflow still lives in the web console, such as:
 
 - creating a self-built app
 - adding or updating permission scopes
+- configuring bot, event, callback, and encryption settings
 - capturing generated app metadata after setup
 
 The repository contains:
