@@ -387,6 +387,44 @@ async function configureSubscriptionMode(page, modeLabelPattern, url, selectors)
   await saveGeneric(page, selectors);
 }
 
+async function getConsoleCSRF(page) {
+  return page.evaluate(() => window.csrfToken);
+}
+
+async function addCallbacksViaAPI(page, appId, callbacks) {
+  const csrfToken = await getConsoleCSRF(page);
+  if (!csrfToken) {
+    throw new Error("Could not read console CSRF token (window.csrfToken)");
+  }
+  const result = await page.evaluate(
+    async ({ appId, csrfToken, callbacks }) => {
+      const resp = await fetch(
+        `https://open.larksuite.com/developers/v1/callback/update/${appId}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-csrf-token": csrfToken
+          },
+          body: JSON.stringify({
+            operation: "add",
+            callbacks,
+            callbackMode: 1
+          })
+        }
+      );
+      return resp.json();
+    },
+    { appId, csrfToken, callbacks }
+  );
+  if (result.code !== 0) {
+    throw new Error(
+      `Console API callback/update returned code ${result.code}: ${result.msg}`
+    );
+  }
+  return result;
+}
+
 async function selectItemsInModal(page, openButtonText, names) {
   await page.getByText(openButtonText, { exact: true }).click();
   await page.waitForTimeout(800);
@@ -405,7 +443,15 @@ async function selectItemsInModal(page, openButtonText, names) {
     const checkbox = row.getByRole("checkbox").first();
     if (await checkbox.count()) {
       if (!(await checkbox.isChecked())) {
-        await checkbox.check();
+        try {
+          await checkbox.check({ timeout: 2000 });
+        } catch {
+          // ud__checkbox component may ignore programmatic check().
+          // Return false so the caller can fall back to the console API.
+          await page.keyboard.press("Escape").catch(() => null);
+          await page.waitForTimeout(300);
+          return false;
+        }
       }
     } else {
       await itemText.click();
@@ -415,6 +461,7 @@ async function selectItemsInModal(page, openButtonText, names) {
 
   await page.getByText("Confirm", { exact: true }).click();
   await page.waitForTimeout(800);
+  return true;
 }
 
 async function configureBot(page, config) {
@@ -497,7 +544,14 @@ async function configureInteractiveCard(page, config) {
     config.interactiveCard.requestUrl,
     { ...selectors, requestUrlInput: selectors.cardRequestUrlInput }
   );
-  await selectItemsInModal(page, "Add callback", config.interactiveCard.callbacks ?? ["card.action.trigger"]);
+
+  const callbacks = config.interactiveCard.callbacks ?? ["card.action.trigger"];
+  const uiSuccess = await selectItemsInModal(page, "Add callback", callbacks);
+  if (!uiSuccess && appId) {
+    // The Lark Console ud__checkbox component ignores programmatic clicks.
+    // Fall back to the internal console API.
+    await addCallbacksViaAPI(page, appId, callbacks);
+  }
   await saveGeneric(page, selectors);
 }
 

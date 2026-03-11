@@ -145,3 +145,52 @@ Preferred strategy:
 - navigate directly to version routes when possible
 - after each action, re-open the version detail page and read status again
 - trust final status labels like `Released`, `Enabled`, and `The current changes have been published`
+
+## Callback Configuration Page
+
+Route:
+
+```text
+/app/:appId/event?tab=callback
+```
+
+### Internal Console APIs
+
+The console makes these authenticated POST calls with `x-csrf-token` header
+(read from `window.csrfToken` on any console page):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /developers/v1/callback/{appId}` | Get current callback config (mode, URL, subscribed callbacks) |
+| `POST /developers/v1/callback/all/{appId}` | List all available callback types |
+| `POST /developers/v1/callback/update/{appId}` | Add or remove callback subscriptions |
+| `POST /developers/v1/robot/{appId}` | Get bot config including `cardCallbackMode` |
+
+#### Adding callbacks via API
+
+```json
+POST /developers/v1/callback/update/{appId}
+{
+  "operation": "add",
+  "callbacks": ["card.action.trigger"],
+  "callbackMode": 1
+}
+```
+
+Returns `{ "code": 0, "data": { "Head": { "RespFormat": 0 } }, "msg": "" }` on success.
+
+### ud__checkbox Issue
+
+The Lark Console `ud__checkbox` component ignores all programmatic interactions:
+`element.click()`, Playwright `check()`, `dispatchEvent`, React fiber `onChange`,
+coordinate-based clicks. The checkbox visually exists but does not toggle.
+
+Workaround: use the `callback/update` API directly instead of clicking checkboxes
+in the "Add callback" modal. The `configureInteractiveCard()` function in the
+provisioning script automatically falls back to this API when `selectItemsInModal()`
+fails to check the checkbox.
+
+### CSRF Token
+
+The correct CSRF token is `window.csrfToken`, **not** the `lark_oapi_csrf_token` cookie.
+Send it as `x-csrf-token` header on all console API calls.
