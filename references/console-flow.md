@@ -109,17 +109,39 @@ Important:
 
 ### 7. Create and Publish a Version
 
-Version release is a separate flow:
+Preferred order:
 
-1. open `/app/:appId/version`
-2. create a version if none exists
-3. fill:
-   - app version
-   - update notes
-   - reason for request
-4. save the version
-5. submit for release if required
-6. publish if the console shows a final publish step
+1. **Console version API** — most reliable, works in headless mode
+2. UI form approach (fallback)
+
+#### API approach (preferred)
+
+```json
+// Create version
+POST /developers/v1/app_version/create/{appId}
+{
+  "appVersion": "1.8.0",
+  "mobileDefaultAbility": "bot",
+  "pcDefaultAbility": "bot",
+  "changeLog": "Update notes here",
+  "visibleSuggest": { "departments": [], "members": ["<userId>"], "groups": [], "isAll": 0 },
+  "applyReasonConfig": { ... }
+}
+
+// Submit and publish (auto-publishes when canAutoApproval is true)
+POST /developers/v1/publish/commit/{appId}/{versionId}
+{}
+```
+
+See `references/selector-notes.md` for the full request body and field details.
+
+#### UI approach (fallback)
+
+1. open `/app/:appId/version/create`
+2. fill version, update notes, and optional reason
+3. save the version
+4. click "Submit for release" and confirm
+5. click "Publish" if it appears (may auto-publish)
 
 Observed behavior:
 

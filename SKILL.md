@@ -19,14 +19,44 @@ Use official OpenAPI where it exists. Use this skill only for console-only setup
 
 ## Workflow
 
-1. Confirm the target is a browser-console workflow, not a supported OpenAPI flow.
-2. Prefer browser automation over undocumented private APIs.
-3. Create or update a config file based on [references/config-schema.md](references/config-schema.md).
-4. Adapt or generate `scripts/provision_lark_app.mjs` for the specific console flow.
-5. Run the script with a persistent Playwright profile so login and 2FA stay in the browser session.
-6. Verify the resulting app name, enabled scopes, and captured credentials in the UI.
+Two approaches are available, prefer API-first:
 
-When the task involves console navigation details, scope cloning, or version publishing, read these references first:
+### API approach (preferred for scope/callback/version changes)
+
+Use `scripts/console_api.mjs` for direct API operations. This is faster and more reliable than browser automation. Playwright is only used to obtain the CSRF token and session cookies.
+
+```bash
+# Scope management
+node scripts/console_api.mjs scopes list <appId>
+node scripts/console_api.mjs scopes find <appId> <keyword>
+node scripts/console_api.mjs scopes add <appId> <scopeId1> [scopeId2 ...]
+node scripts/console_api.mjs scopes remove <appId> <scopeId1> [scopeId2 ...]
+
+# Callback management
+node scripts/console_api.mjs callbacks list <appId>
+node scripts/console_api.mjs callbacks add <appId> <callback1> [callback2 ...]
+
+# Version management
+node scripts/console_api.mjs version list <appId>
+node scripts/console_api.mjs version create <appId> --version <ver> --notes <notes>
+node scripts/console_api.mjs version publish <appId> --version <ver> --notes <notes>
+
+# App info
+node scripts/console_api.mjs app info <appId>
+```
+
+The `version publish` command creates a version AND publishes it in one step (auto-publishes when the org has auto-approval enabled).
+
+For scope IDs, use `scopes find` to search by keyword, or see the ID table in `references/selector-notes.md`.
+
+### Browser approach (for app creation and complex flows)
+
+1. Confirm the target is a browser-console workflow.
+2. Create or update a config file based on [references/config-schema.md](references/config-schema.md).
+3. Run `scripts/provision_lark_app.mjs` with a persistent Playwright profile.
+4. Verify the resulting app in the console.
+
+When the task involves console navigation details or scope cloning, read these references first:
 
 - [references/console-flow.md](references/console-flow.md)
 - [references/selector-notes.md](references/selector-notes.md)
@@ -80,10 +110,11 @@ Useful patterns:
 
 ## Files
 
+- `scripts/console_api.mjs`: Console API client — scope, callback, and version management via API (preferred)
 - `scripts/provision_lark_app.mjs`: Playwright automation entrypoint (create or configure a single app)
 - `scripts/clone_app_config.mjs`: Clone config (scopes, bot, events, callbacks) to all apps matching a pattern
-- `scripts/publish_apps.mjs`: Create and publish versions for all apps matching a pattern
+- `scripts/publish_apps.mjs`: Create and publish versions for all apps matching a pattern (browser approach)
 - `references/config-schema.md`: minimal config contract and selector override guidance
 - `references/console-flow.md`: console workflow map and fallback rules
-- `references/selector-notes.md`: UI structure notes and selector risks
+- `references/selector-notes.md`: UI structure notes, selector risks, and API endpoint reference
 - `references/case-doceditor.md`: sanitized example of cloning and publishing an app

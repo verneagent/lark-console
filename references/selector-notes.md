@@ -196,25 +196,45 @@ POST /developers/v1/scope/update/{appId}
 }
 ```
 
-### Scope IDs for common handoff scopes
+### Scope IDs
 
-| Scope name | ID |
-|------------|-----|
-| `contact:user.id:readonly` | 8 |
-| `im:chat` | 21001 |
-| `im:message` | 20001 |
-| `im:message.group_msg` | 20012 |
-| `im:message:readonly` | 20008 |
-| `im:message:send_as_bot` | 1000 |
-| `im:resource` | 20009 |
+| Scope name | ID | Category |
+|------------|-----|----------|
+| `contact:user.id:readonly` | 8 | Contact |
+| `contact:user.employee_id:readonly` | 3 | Contact |
+| `im:chat` | 21001 | IM |
+| `im:chat:readonly` | 21003 | IM |
+| `im:message` | 20001 | IM |
+| `im:message.group_msg` | 20012 | IM |
+| `im:message:readonly` | 20008 | IM |
+| `im:message:send_as_bot` | 1000 | IM |
+| `im:resource` | 20009 | IM |
+| `docx:document` | 41002 | Docs |
+| `docx:document:readonly` | 41003 | Docs |
+| `docs:doc` | 26007 | Docs (legacy) |
+| `docs:doc:readonly` | 26008 | Docs (legacy) |
+| `wiki:wiki` | 26009 | Wiki |
+| `wiki:wiki:readonly` | 26010 | Wiki |
+| `drive:drive` | 26001 | Drive |
+| `drive:drive:readonly` | 26003 | Drive |
+| `drive:file` | 26005 | Drive |
+| `drive:file:readonly` | 26006 | Drive |
+| `bitable:app` | 26015 | Bitable |
+| `bitable:app:readonly` | 26016 | Bitable |
+| `sheets:spreadsheet` | 26011 | Sheets |
+| `sheets:spreadsheet:readonly` | 26012 | Sheets |
+| `cardkit:card:read` | 1014131 | CardKit |
+| `cardkit:card:write` | 1014132 | CardKit |
+
+To discover IDs for scopes not listed here, call `/developers/v1/scope/all/{appId}` which returns all scopes with their numeric `id` and `name` fields.
 
 ### Scope status values
 
 | Status | Meaning |
 |--------|---------|
-| 5 | Not applied (available) |
-| 0 | Removed (pending version to take effect) |
-| 1 | Added (pending version to take effect) |
+| 5 | Active (applied and in effect) |
+| 0 | Not applied (available to add) |
+| 1 | Added (pending version publish to take effect) |
 
 ### Important notes
 
@@ -282,6 +302,81 @@ Workaround: use the `callback/update` API directly instead of clicking checkboxe
 in the "Add callback" modal. The `configureInteractiveCard()` function in the
 provisioning script automatically falls back to this API when `selectItemsInModal()`
 fails to check the checkbox.
+
+## Version Management via Console API
+
+Version creation and publishing can also be done via the console API, making the entire provision flow API-only (no UI clicking needed).
+
+### Version API Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /developers/v1/app_version/list/{appId}` | List all versions |
+| `POST /developers/v1/app_version/detail/{appId}/{versionId}` | Get version details |
+| `POST /developers/v1/app_version/change/{appId}` | Get pending changes since last version |
+| `POST /developers/v1/app_version/create/{appId}` | Create a new version |
+| `POST /developers/v1/publish/commit/{appId}/{versionId}` | Submit and publish the version |
+| `POST /developers/v1/approval_nodes/get/{appId}` | Check if auto-approval is available |
+
+### Creating and publishing a version (full flow)
+
+```json
+// Step 1: Create version
+POST /developers/v1/app_version/create/{appId}
+{
+  "appVersion": "1.8.0",
+  "mobileDefaultAbility": "bot",
+  "pcDefaultAbility": "bot",
+  "changeLog": "Add document and wiki scopes",
+  "visibleSuggest": {
+    "departments": [],
+    "members": ["<userId>"],
+    "groups": [],
+    "isAll": 0
+  },
+  "applyReasonConfig": {
+    "apiPrivilegeNeedReason": false,
+    "contactPrivilegeNeedReason": false,
+    "dataPrivilegeReasonMap": {},
+    "visibleScopeNeedReason": false,
+    "apiPrivilegeReasonMap": {},
+    "contactPrivilegeReason": "",
+    "isDataPrivilegeExpandMap": {},
+    "visibleScopeReason": "",
+    "dataPrivilegeNeedReason": false,
+    "isAutoAudit": false,
+    "isContactExpand": false
+  }
+}
+// Returns: { "code": 0, "data": { "versionId": "7617092966151900895" } }
+```
+
+```json
+// Step 2: Submit and publish
+POST /developers/v1/publish/commit/{appId}/{versionId}
+{}
+// Returns: { "code": 0 }
+```
+
+### Important notes
+
+- The `visibleSuggest.members` array must include at least one user ID (the developer)
+- `mobileDefaultAbility` and `pcDefaultAbility` should match the app's configured abilities (usually `"bot"`)
+- `publish/commit` both submits for review and publishes in one call when auto-approval is enabled
+- Auto-approval status can be checked via `approval_nodes/get` — if `canAutoApproval: true`, publish/commit will auto-publish
+- The `changeLog` field corresponds to "What's new" / "Update notes" in the UI
+
+### Other useful APIs
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /developers/v1/app/{appId}` | Get app info (status, abilities, avatar) |
+| `POST /developers/v1/app_role/permission/{appId}` | Get role permissions |
+| `POST /developers/v1/privilege/all/{appId}` | List all data permissions |
+| `POST /developers/v1/contact_range/{appId}` | Get contact range config |
+| `POST /developers/v1/config/audit_rule/{appId}` | Get audit rule config |
+| `POST /developers/v1/visible/online/{appId}` | Get visibility settings |
+| `POST /developers/v1/scope/applied/{appId}` | List applied scopes with details |
 
 ### CSRF Token
 
