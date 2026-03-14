@@ -8,7 +8,7 @@ import process from "node:process";
 const DEFAULT_CONFIG_PATH = "~/.lark-console/config.json";
 const DEBUG_DIR = "~/.lark-console/debug";
 const DEFAULT_SELECTORS = {
-  createAppButton: 'button:has-text("Create App"), button:has-text("创建应用")',
+  createAppButton: 'button:has-text("Create Custom App"), button:has-text("Create App"), button:has-text("创建应用")',
   appNameInput: 'input[placeholder="App Name"], input[placeholder="应用名称"]',
   descriptionInput: 'textarea',
   createAppDialog: '[role="dialog"]',
@@ -245,13 +245,16 @@ async function createApp(page, config) {
   }
 
   await clickOptional(page, selectors.presetIcon ?? "");
-  const dialogButtons = dialog.locator('button');
-  const buttonCount = await dialogButtons.count();
-  if (buttonCount > 0) {
-    await dialogButtons.nth(buttonCount - 2 >= 0 ? buttonCount - 2 : buttonCount - 1).click();
+  await page.waitForTimeout(500);
+  // Click the Create/Confirm button using page-scoped locator
+  // (dialog role attribute may be missing in some Lark console versions)
+  const createBtn = page.locator('button:has-text("Create"):not(:has-text("Create Custom")):not(:has-text("Create App"))').last();
+  if (await createBtn.count()) {
+    await createBtn.click();
   } else {
     await clickAny(page, selectors.createConfirmButton);
   }
+  await page.waitForTimeout(3000);
   await page.waitForLoadState("networkidle");
 }
 
@@ -292,7 +295,7 @@ async function savePermissions(page, selectors) {
 async function saveGeneric(page, selectors) {
   try {
     await clickAny(page, selectors.saveButton);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
   } catch {
     // Some settings pages auto-save.
   }
@@ -391,6 +394,39 @@ async function getConsoleCSRF(page) {
   return page.evaluate(() => window.csrfToken);
 }
 
+async function addEventsViaAPI(page, appId, events) {
+  const csrfToken = await getConsoleCSRF(page);
+  if (!csrfToken) {
+    throw new Error("Could not read console CSRF token (window.csrfToken)");
+  }
+  const result = await page.evaluate(
+    async ({ appId, csrfToken, events }) => {
+      const resp = await fetch(
+        `https://open.larksuite.com/developers/v1/event/update/${appId}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-csrf-token": csrfToken
+          },
+          body: JSON.stringify({
+            operation: "add",
+            events
+          })
+        }
+      );
+      return resp.json();
+    },
+    { appId, csrfToken, events }
+  );
+  if (result.code !== 0) {
+    throw new Error(
+      `Console API event/update returned code ${result.code}: ${result.msg}`
+    );
+  }
+  return result;
+}
+
 async function addCallbacksViaAPI(page, appId, callbacks) {
   const csrfToken = await getConsoleCSRF(page);
   if (!csrfToken) {
@@ -459,7 +495,16 @@ async function selectItemsInModal(page, openButtonText, names) {
     await page.waitForTimeout(200);
   }
 
-  await page.getByText("Confirm", { exact: true }).click();
+  // Click the primary action button (may be "Confirm", "Add", or similar)
+  const confirmBtn = page.locator('[role="dialog"] button:has-text("Add"):not([disabled]), [role="dialog"] button:has-text("Confirm"):not([disabled]), [role="dialog"] button:has-text("Done"):not([disabled]), [role="dialog"] button:has-text("OK"):not([disabled])').last();
+  if (await confirmBtn.count()) {
+    await confirmBtn.click();
+  } else {
+    // Button is disabled — likely no items were checked (ud__checkbox issue)
+    await page.keyboard.press("Escape").catch(() => null);
+    await page.waitForTimeout(300);
+    return false;
+  }
   await page.waitForTimeout(800);
   return true;
 }
@@ -477,7 +522,34 @@ async function configureBot(page, config) {
   } else {
     await clickAny(page, selectors.botNav);
   }
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
+  await page.waitForTimeout(1000);
+
+  // If bot page shows "page does not exist", enable bot via Add Features
+  const bodyText = await page.locator("body").innerText();
+  if (bodyText.includes("page does not exist") || bodyText.includes("页面不存在")) {
+    const botAppId = appId ?? getCurrentAppId(page);
+    if (botAppId) {
+      // Navigate to Add Features and enable Bot
+      await page.goto(`https://open.larksuite.com/app/${botAppId}/feature`, {
+        waitUntil: "domcontentloaded"
+      });
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
+      await page.waitForTimeout(1000);
+      const botCard = page.getByText("Bot", { exact: true }).first();
+      if (await botCard.count()) {
+        await botCard.click();
+        await page.waitForTimeout(1000);
+      }
+      // Return to bot page
+      await page.goto(`https://open.larksuite.com/app/${botAppId}/bot`, {
+        waitUntil: "domcontentloaded"
+      });
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
+      await page.waitForTimeout(1000);
+    }
+  }
+
   try {
     await checkFirst(
       page,
@@ -503,7 +575,7 @@ async function configureEventSubscriptions(page, config) {
   } else {
     await clickAny(page, selectors.eventSubscriptionNav);
   }
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
   await dismissEventGuidance(page);
   await page.getByText(/Event configuration/i, { exact: false }).first().scrollIntoViewIfNeeded().catch(
     () => null
@@ -516,7 +588,18 @@ async function configureEventSubscriptions(page, config) {
   );
 
   if ((config.eventSubscriptions.events ?? []).length) {
-    await selectItemsInModal(page, "Add Events", config.eventSubscriptions.events);
+    // Check which events are not yet present on the page
+    const pageText = await page.locator("body").innerText();
+    const missingEvents = config.eventSubscriptions.events.filter(
+      (e) => !pageText.includes(e)
+    );
+    if (missingEvents.length) {
+      const uiSuccess = await selectItemsInModal(page, "Add Events", missingEvents);
+      if (!uiSuccess && appId) {
+        // ud__checkbox component ignores programmatic clicks — fall back to console API
+        await addEventsViaAPI(page, appId, missingEvents);
+      }
+    }
   }
 
   await saveGeneric(page, selectors);
@@ -535,7 +618,7 @@ async function configureInteractiveCard(page, config) {
   } else {
     await clickAny(page, selectors.interactiveCardNav);
   }
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
   await dismissEventGuidance(page);
   await page.getByText(/Callback configuration/i, { exact: false }).first().click().catch(() => null);
   await configureSubscriptionMode(
