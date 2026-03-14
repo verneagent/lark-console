@@ -55,6 +55,7 @@ Notes:
 - `mode` supports `create-and-configure` and `configure-existing`.
 - Set `appId` when you want to update an existing app without creating a new one.
 - `botEnabled`, `eventSubscriptions`, `interactiveCard`, and `encryption` are optional.
+- `clonePattern` is optional. Used by `clone_app_config.mjs` and `publish_apps.mjs` as default `--pattern` value.
 - `selectors` is optional. Add overrides only for the fields that changed.
 - Prefer stable `data-*` selectors when the console exposes them.
 - `profileDir` and `outputPath` may use `~/...`; the script expands them to the user's home directory.

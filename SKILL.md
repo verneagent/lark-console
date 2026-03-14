@@ -80,7 +80,9 @@ Useful patterns:
 
 ## Files
 
-- `scripts/provision_lark_app.mjs`: Playwright automation entrypoint
+- `scripts/provision_lark_app.mjs`: Playwright automation entrypoint (create or configure a single app)
+- `scripts/clone_app_config.mjs`: Clone config (scopes, bot, events, callbacks) to all apps matching a pattern
+- `scripts/publish_apps.mjs`: Create and publish versions for all apps matching a pattern
 - `references/config-schema.md`: minimal config contract and selector override guidance
 - `references/console-flow.md`: console workflow map and fallback rules
 - `references/selector-notes.md`: UI structure notes and selector risks
