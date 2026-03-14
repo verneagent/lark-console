@@ -61,19 +61,22 @@ Prefer opening:
 
 This is more reliable than trying to infer where the UI redirected after creation.
 
-### 4. Clone Scopes
+### 4. Add or Clone Scopes
 
 Preferred order:
 
-1. export/import payload from `Batch import/export scopes`
-2. structured table extraction
-3. visible text extraction as last resort
+1. **Console scope API** (`/developers/v1/scope/update/{appId}`) — most reliable, works in headless mode
+2. Batch import via Monaco editor (keyboard.type only, not fill/value)
+3. UI checkbox approach (unreliable due to ud__checkbox issue)
+
+The scope API uses numeric scope IDs. See `references/selector-notes.md` for the ID mapping and API format.
 
 Important:
 
 - the scopes table is virtualized; do not trust only the first screen
-- batch import/export is the best source of truth when the export payload can be read cleanly
-- if export tooling is brittle, use a user-provided JSON payload or a verified scope list
+- scope additions via API only take effect after publishing a new version
+- accidentally adding many scopes (especially admin/email scopes) can block version creation due to unconfigured data permissions — this state is difficult to recover from
+- always add scopes one-by-one via API rather than attempting bulk UI operations
 
 ### 5. Verify Bot / Events / Cards Separately
 

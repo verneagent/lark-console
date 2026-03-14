@@ -394,6 +394,70 @@ async function getConsoleCSRF(page) {
   return page.evaluate(() => window.csrfToken);
 }
 
+async function addScopesViaAPI(page, appId, scopeNames) {
+  const csrfToken = await getConsoleCSRF(page);
+  if (!csrfToken) {
+    throw new Error("Could not read console CSRF token (window.csrfToken)");
+  }
+  // First get scope IDs from the all-scopes list
+  const allScopes = await page.evaluate(
+    async ({ appId, csrfToken }) => {
+      const resp = await fetch(
+        `https://open.larksuite.com/developers/v1/scope/all/${appId}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-csrf-token": csrfToken
+          },
+          body: "{}"
+        }
+      );
+      const data = await resp.json();
+      return data.data?.scopes ?? [];
+    },
+    { appId, csrfToken }
+  );
+
+  const nameToId = {};
+  for (const s of allScopes) {
+    nameToId[s.name] = s.id;
+  }
+
+  const results = [];
+  for (const name of scopeNames) {
+    const scopeId = nameToId[name];
+    if (!scopeId) {
+      results.push({ name, error: "scope not found" });
+      continue;
+    }
+    const result = await page.evaluate(
+      async ({ appId, csrfToken, scopeId }) => {
+        const resp = await fetch(
+          `https://open.larksuite.com/developers/v1/scope/update/${appId}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-csrf-token": csrfToken
+            },
+            body: JSON.stringify({
+              appScopeIDs: [scopeId],
+              userScopeIDs: [],
+              scopeIds: [],
+              operation: "add"
+            })
+          }
+        );
+        return resp.json();
+      },
+      { appId, csrfToken, scopeId }
+    );
+    results.push({ name, code: result.code });
+  }
+  return results;
+}
+
 async function addEventsViaAPI(page, appId, events) {
   const csrfToken = await getConsoleCSRF(page);
   if (!csrfToken) {
@@ -729,7 +793,18 @@ async function main() {
   }
 
   await openPermissions(page, config);
-  await importScopes(page, config.scopes ?? [], config.selectors);
+  const appId = getCurrentAppId(page);
+  if (appId && (config.scopes ?? []).length) {
+    // Prefer API-based scope addition (works reliably in headless mode)
+    const apiResults = await addScopesViaAPI(page, appId, config.scopes);
+    const allOk = apiResults.every(r => r.code === 0);
+    if (!allOk) {
+      // Fall back to batch import UI
+      await importScopes(page, config.scopes ?? [], config.selectors);
+    }
+  } else {
+    await importScopes(page, config.scopes ?? [], config.selectors);
+  }
   await savePermissions(page, config.selectors);
   await configureBot(page, config);
   await configureEventSubscriptions(page, config);

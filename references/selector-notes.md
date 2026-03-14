@@ -81,19 +81,29 @@ Preferred strategy:
 Observed behavior:
 
 - import and export content may coexist in the same UI
-- Monaco/editor-backed textareas may expose partial values through DOM
-- visible text can include example JSON, not the actual full export payload
+- the editor is a Monaco editor (VS Code-like), not a plain textarea
+- Monaco renders syntax-highlighted spans over a hidden textarea
+- `textarea.fill()`, `textarea.value = ...`, and clipboard paste do NOT work
+- `keyboard.type()` with `{ delay: 2 }` DOES work after clicking into the editor
+
+Working approach for batch import:
+
+1. Click `Batch import/export scopes`
+2. Click `Reset Defaults` to clear existing content
+3. Click `.monaco-editor .view-line` with `{ force: true }` to focus
+4. `Meta+a` → `Backspace` to clear
+5. `keyboard.type(json, { delay: 2 })` to type the JSON
+6. Click `Format JSON` to validate
+7. Click `Next, Review New Scopes` (check it's not disabled)
+8. Click `Add` in the review dialog
 
 Risk:
 
-- `textarea.value` may be truncated
-- visible DOM may show only part of the export result
+- the `Add` button in the review dialog may not persist scopes without a version publish
+- scopes added via batch import show as "Newly added" in review but only take effect after publishing a new version
+- body-text scraping misses off-screen rows in the scope table
 
-Preferred strategy:
-
-- treat export/import as preferred product behavior
-- but verify the extracted payload before trusting it
-- if the extracted export JSON is incomplete, fall back to a user-provided payload or a verified scope list
+Preferred strategy: **use the console scope API instead** (see below)
 
 ## Credentials Page
 
@@ -145,6 +155,89 @@ Preferred strategy:
 - navigate directly to version routes when possible
 - after each action, re-open the version detail page and read status again
 - trust final status labels like `Released`, `Enabled`, and `The current changes have been published`
+
+## Scope Management via Console API
+
+The most reliable way to add or remove scopes is through the console's internal API, bypassing the broken `ud__checkbox` components entirely.
+
+### Scope API Endpoints
+
+All endpoints use `POST` with `x-csrf-token` header (from `window.csrfToken`):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /developers/v1/scope/all/{appId}` | List all scopes with current status |
+| `POST /developers/v1/scope/applied/{appId}` | List scopes in the "applied" category |
+| `POST /developers/v1/scope/update/{appId}` | Add or remove a scope |
+
+### Adding a scope
+
+```json
+POST /developers/v1/scope/update/{appId}
+{
+  "appScopeIDs": ["21001"],
+  "userScopeIDs": [],
+  "scopeIds": [],
+  "operation": "add"
+}
+```
+
+Returns `{ "code": 0 }` on success.
+
+### Removing a scope
+
+```json
+POST /developers/v1/scope/update/{appId}
+{
+  "appScopeIDs": ["21001"],
+  "userScopeIDs": [],
+  "scopeIds": [],
+  "operation": "del"
+}
+```
+
+### Scope IDs for common handoff scopes
+
+| Scope name | ID |
+|------------|-----|
+| `contact:user.id:readonly` | 8 |
+| `im:chat` | 21001 |
+| `im:message` | 20001 |
+| `im:message.group_msg` | 20012 |
+| `im:message:readonly` | 20008 |
+| `im:message:send_as_bot` | 1000 |
+| `im:resource` | 20009 |
+
+### Scope status values
+
+| Status | Meaning |
+|--------|---------|
+| 5 | Not applied (available) |
+| 0 | Removed (pending version to take effect) |
+| 1 | Added (pending version to take effect) |
+
+### Important notes
+
+- Scope additions via API return `code: 0` immediately but only take effect after publishing a new app version
+- Removed scopes (status=0) persist in the scope list until a version is published
+- Removed scopes with unconfigured "data permissions" will block version creation — you must configure or fully clear data permissions before publishing
+- Use `/scope/all/` (not `/scope/applied/`) to see the true status of all scopes
+- The `appScopeIDs` field uses numeric string IDs (e.g. `"21001"`), not scope names
+
+### Event and Callback APIs
+
+Events and card callbacks can also be managed via the same API pattern:
+
+```json
+POST /developers/v1/callback/update/{appId}
+{
+  "operation": "add",
+  "callbacks": ["im.message.receive_v1", "im.message.reaction.created_v1"],
+  "callbackMode": 1
+}
+```
+
+This works for both event subscriptions and card callbacks. No need to set subscription mode or URL separately if using the API.
 
 ## Callback Configuration Page
 
