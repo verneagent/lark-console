@@ -43,6 +43,7 @@ node scripts/console_api.mjs version publish <appId> --version <ver> --notes <no
 
 # App info
 node scripts/console_api.mjs app info <appId>
+node scripts/console_api.mjs app set-icon <appId> --icon <path>
 ```
 
 The `version publish` command creates a version AND publishes it in one step (auto-publishes when the org has auto-approval enabled).
@@ -69,17 +70,17 @@ If a similar app-creation task has already been executed in this repo, also chec
 - Do not rely on undocumented console APIs as the primary solution.
 - If the console DOM changes, update selectors or add a page-specific mapping layer instead of hardcoding brittle text-only paths everywhere.
 - Keep secrets out of source control. Persist any captured `App ID` or `App Secret` only in user-approved locations.
-- **API discovery rule**: When a new console API endpoint is discovered (by inspecting network requests, trying endpoints, or observing browser automation), always add it to `scripts/console_api.mjs` as a new subcommand. Document the endpoint path, method, and payload in `references/selector-notes.md`. The goal is to grow the API client over time so browser automation is only needed for truly UI-only operations.
+- **API discovery rule**: When performing any browser automation, always capture network requests using `page.on("request")` / `page.on("response")` to discover the actual API endpoints the console UI calls. Add discovered endpoints to `scripts/console_api.mjs` as new subcommands and document them in `references/selector-notes.md`. The goal is to grow the API client over time so browser automation is only needed for truly UI-only operations (e.g., flows requiring file chooser dialogs or complex DOM interactions that have no API equivalent).
 
 ## Browser-Only Operations
 
-Some console operations have no known API and require Playwright browser automation:
+Some console operations have no direct API and require Playwright browser automation (file input + dialog handling). This table should shrink over time as APIs are discovered via network capture.
 
-| Operation | Why browser-only | Notes |
-|-----------|-----------------|-------|
-| Icon upload | `/developers/v1/app/update_avatar/` and `/developers/v1/image/upload` return 404 | Flow: edit pencil → icon area click → file chooser → crop dialog Save → form Save. Icon must be < 2MB. |
+| Operation | Command | Notes |
+|-----------|---------|-------|
+| Icon upload | `app set-icon <appId> --icon <path>` | Uses Playwright file input flow: edit mode → file chooser → crop dialog → save. The internal upload API (`/developers/v1/app/upload/image`) only accepts requests from the UI's React upload component. Icon must be < 2MB, formats: PNG/JPG/SVG/BMP. |
 
-When a browser-only operation is later found to have an API, move it out of this table and add the API to `console_api.mjs`.
+When a browser-only operation is found, add it here. When a direct API is later discovered, update the implementation in `console_api.mjs`.
 
 ## Inputs
 

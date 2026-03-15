@@ -19,6 +19,7 @@
  *   node console_api.mjs version create <appId> --version <ver> --notes <notes>
  *   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
  *   node console_api.mjs app info <appId>
+ *   node console_api.mjs app set-icon <appId> --icon <path>
  *
  * Options:
  *   --profile <dir>  Playwright profile directory (default: ~/.lark-console/profile)
@@ -29,6 +30,7 @@
 import { chromium } from "playwright";
 import os from "node:os";
 import path from "node:path";
+import fs from "node:fs";
 
 function expandUser(p) {
   if (!p) return p;
@@ -45,6 +47,7 @@ function parseArgs() {
     json: false,
     version: null,
     notes: null,
+    icon: null,
     args: [],
   };
   let i = 0;
@@ -55,6 +58,7 @@ function parseArgs() {
     else if (a === "--json") { opts.json = true; }
     else if (a === "--version") { opts.version = argv[++i]; }
     else if (a === "--notes") { opts.notes = argv[++i]; }
+    else if (a === "--icon") { opts.icon = expandUser(argv[++i]); }
     else { opts.args.push(a); }
     i++;
   }
@@ -348,6 +352,62 @@ async function appInfo(page, csrf, appId, jsonMode) {
   console.log(`Latest version ID: ${d.auditVersionId || "none"}`);
 }
 
+// ──── Icon ────
+
+async function appSetIcon(page, csrf, appId, iconPath) {
+  if (!iconPath) { console.error("ERROR: --icon <path> is required"); process.exit(1); }
+  if (!fs.existsSync(iconPath)) { console.error(`ERROR: File not found: ${iconPath}`); process.exit(1); }
+
+  const stat = fs.statSync(iconPath);
+  if (stat.size > 2 * 1024 * 1024) {
+    console.error(`ERROR: Icon must be under 2MB (got ${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
+    process.exit(1);
+  }
+
+  // Navigate to baseinfo page
+  console.log("Navigating to baseinfo...");
+  await page.goto(`https://open.larksuite.com/app/${appId}/baseinfo`, {
+    waitUntil: "networkidle", timeout: 30000,
+  });
+  await sleep(2000);
+
+  // Click edit pencil next to "General info"
+  const pencil = page.locator("text=General info >> .. >> svg").first();
+  await pencil.click({ timeout: 5000 });
+  console.log("Entered edit mode");
+  await sleep(2000);
+
+  // Click icon upload area to trigger file chooser
+  const iconUpload = page.locator('.image-upload-icon, [class*="image-upload"]').first();
+  const [fileChooser] = await Promise.all([
+    page.waitForEvent("filechooser", { timeout: 10000 }),
+    iconUpload.click(),
+  ]);
+  await fileChooser.setFiles(iconPath);
+  console.log("File selected");
+  await sleep(3000);
+
+  // Handle crop dialog Save button (if visible)
+  const dialogSave = page.locator('[role="dialog"] button:has-text("Save"), .ud__dialog button:has-text("Save")').first();
+  if (await dialogSave.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await dialogSave.click({ force: true });
+    console.log("Crop dialog saved");
+    await sleep(2000);
+  }
+
+  // Click outer form Save
+  const outerSave = page.locator('button:has-text("Save")').first();
+  if (await outerSave.isVisible()) {
+    await outerSave.click({ force: true });
+    await sleep(2000);
+  }
+
+  console.log("✓ Icon set successfully");
+  console.log("\nNote: Publish a new version for the icon change to take effect.");
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
 // ──── Main ────
 
 async function main() {
@@ -367,6 +427,7 @@ async function main() {
   node console_api.mjs version create <appId> --version <ver> --notes <notes>
   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
   node console_api.mjs app info <appId>
+  node console_api.mjs app set-icon <appId> --icon <path>
 
 Options:
   --profile <dir>   Playwright profile (default: ~/.lark-console/profile)
@@ -397,6 +458,7 @@ Options:
       case "version.create": await versionCreate(page, csrfToken, appId, opts.version, opts.notes); break;
       case "version.publish": await versionPublish(page, csrfToken, appId, opts.version, opts.notes); break;
       case "app.info": await appInfo(page, csrfToken, appId, opts.json); break;
+      case "app.set-icon": await appSetIcon(page, csrfToken, appId, opts.icon); break;
       default:
         console.error(`Unknown command: ${domain} ${action}`);
         process.exit(1);
