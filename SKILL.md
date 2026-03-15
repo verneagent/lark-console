@@ -1,6 +1,6 @@
 ---
 name: lark-console
-description: Automate creating and configuring Lark developer console apps with Playwright. Use when a user wants a repeatable browser-driven workflow for app creation, permission scope changes, or other console-only setup that is not covered by official OpenAPI or CLI support.
+description: Automate creating and configuring Lark developer console apps via console APIs and Playwright. Use when a user wants a repeatable workflow for app creation, permission scope changes, version publishing, or other console-only setup that is not covered by official OpenAPI or CLI support.
 ---
 
 # Lark Console
@@ -49,6 +49,11 @@ node scripts/console_api.mjs app set-icon <appId> --icon <path>
 node scripts/console_api.mjs app enable-bot <appId>
 node scripts/console_api.mjs app set-webhook <appId> --url <webhookUrl>
 node scripts/console_api.mjs app set-card-url <appId> --url <cardUrl>
+node scripts/console_api.mjs app delete <appId> [--force]
+
+# Admin Console (tenant-specific domain)
+node scripts/console_api.mjs admin stop <appId>
+node scripts/console_api.mjs admin activate <appId>
 ```
 
 The `version publish` command creates a version AND publishes it in one step (auto-publishes when the org has auto-approval enabled).
