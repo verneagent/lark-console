@@ -25,7 +25,9 @@
  *   node console_api.mjs app enable-bot <appId>
  *   node console_api.mjs app set-webhook <appId> --url <webhookUrl>
  *   node console_api.mjs app set-card-url <appId> --url <cardUrl>
- *   node console_api.mjs app delete <appId>
+ *   node console_api.mjs app delete <appId> [--force]
+ *   node console_api.mjs admin stop <appId>
+ *   node console_api.mjs admin activate <appId>
  *
  * Options:
  *   --profile <dir>  Playwright profile directory (default: ~/.lark-console/profile)
@@ -57,6 +59,7 @@ function parseArgs() {
     name: null,
     desc: null,
     url: null,
+    force: false,
     args: [],
   };
   let i = 0;
@@ -71,6 +74,7 @@ function parseArgs() {
     else if (a === "--name") { opts.name = argv[++i]; }
     else if (a === "--desc") { opts.desc = argv[++i]; }
     else if (a === "--url") { opts.url = argv[++i]; }
+    else if (a === "--force") { opts.force = true; }
     else { opts.args.push(a); }
     i++;
   }
@@ -572,14 +576,107 @@ async function appSetCardUrl(page, csrf, appId, url) {
 
 // ──── App Delete ────
 
-async function appDelete(page, csrf, appId) {
+async function appDelete(page, csrf, appId, force) {
+  if (force) {
+    // Force delete: first stop via Admin Console, then delete
+    console.log("Force delete: stopping app via Admin Console...");
+    const stopped = await adminStop(page, appId);
+    if (!stopped) {
+      console.error("✗ Force delete failed: could not stop app via Admin Console");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
   const res = await api(page, csrf, `/developers/v1/app/delete/${appId}`);
   if (res.code === 0) {
     console.log(`✓ App ${appId} deleted`);
   } else if (res.code === 10003) {
-    console.error(`✗ Cannot delete: app is published. Unpublish from Admin Console first.`);
+    console.error(`✗ Cannot delete: app is published. Use --force to stop and delete.`);
   } else {
     console.error(`✗ Delete failed: ${JSON.stringify(res)}`);
+  }
+}
+
+// ──── Admin Console ────
+
+async function getAdminBaseUrl(page) {
+  // Navigate to admin console to discover the tenant-specific URL
+  await page.goto("https://admin.larksuite.com", {
+    waitUntil: "domcontentloaded",
+    timeout: 15000,
+  });
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 2000));
+
+  const url = page.url();
+  const match = url.match(/(https:\/\/[^/]+)/);
+  return match?.[1] || null;
+}
+
+async function adminApi(page, baseUrl, method, endpoint, body = {}) {
+  // Navigate to admin page first to ensure cookies are set for the admin domain
+  const currentUrl = page.url();
+  if (!currentUrl.includes(new URL(baseUrl).hostname)) {
+    await page.goto(`${baseUrl}/admin/appCenter/manage`, {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => null);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  return page.evaluate(
+    async ({ method, endpoint, body }) => {
+      // Get CSRF token from cookie (admin console uses csrf_token cookie)
+      const csrfMatch = document.cookie.match(/csrf_token=([^;]+)/);
+      const csrfToken = csrfMatch?.[1] || "";
+
+      const res = await fetch(endpoint, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await res.text();
+      try { return JSON.parse(text); }
+      catch { return { code: -1, status: res.status, text }; }
+    },
+    { method, endpoint: `/suite/admin/appcenter/v4/app${endpoint}`, body },
+  );
+}
+
+async function adminStop(page, appId) {
+  const baseUrl = await getAdminBaseUrl(page);
+  if (!baseUrl) {
+    console.error("✗ Could not determine Admin Console URL");
+    return false;
+  }
+
+  const res = await adminApi(page, baseUrl, "PUT", `/${appId}/stop`);
+  if (res.code === 0) {
+    console.log(`✓ App ${appId} stopped (deactivated)`);
+    return true;
+  } else {
+    console.error(`✗ Stop failed: ${JSON.stringify(res)}`);
+    return false;
+  }
+}
+
+async function adminActivate(page, appId) {
+  const baseUrl = await getAdminBaseUrl(page);
+  if (!baseUrl) {
+    console.error("✗ Could not determine Admin Console URL");
+    return;
+  }
+
+  const res = await adminApi(page, baseUrl, "PUT", `/${appId}/active`);
+  if (res.code === 0) {
+    console.log(`✓ App ${appId} activated (enabled)`);
+  } else {
+    console.error(`✗ Activate failed: ${JSON.stringify(res)}`);
   }
 }
 
@@ -608,7 +705,9 @@ async function main() {
   node console_api.mjs app enable-bot <appId>
   node console_api.mjs app set-webhook <appId> --url <url>
   node console_api.mjs app set-card-url <appId> --url <url>
-  node console_api.mjs app delete <appId>
+  node console_api.mjs app delete <appId> [--force]
+  node console_api.mjs admin stop <appId>
+  node console_api.mjs admin activate <appId>
 
 Options:
   --profile <dir>   Playwright profile (default: ~/.lark-console/profile)
@@ -619,8 +718,9 @@ Options:
     process.exit(0);
   }
 
-  // app create doesn't need appId
-  if (!appId && `${domain}.${action}` !== "app.create") {
+  // app create doesn't need appId; admin commands use appId from args
+  const cmd = `${domain}.${action}`;
+  if (!appId && cmd !== "app.create") {
     console.error("ERROR: appId is required");
     process.exit(1);
   }
@@ -646,7 +746,9 @@ Options:
       case "app.enable-bot": await appEnableBot(page, csrfToken, appId); break;
       case "app.set-webhook": await appSetWebhook(page, csrfToken, appId, opts.url); break;
       case "app.set-card-url": await appSetCardUrl(page, csrfToken, appId, opts.url); break;
-      case "app.delete": await appDelete(page, csrfToken, appId); break;
+      case "app.delete": await appDelete(page, csrfToken, appId, opts.force); break;
+      case "admin.stop": await adminStop(page, appId); break;
+      case "admin.activate": await adminActivate(page, appId); break;
       default:
         console.error(`Unknown command: ${domain} ${action}`);
         process.exit(1);
