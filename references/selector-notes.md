@@ -366,6 +366,45 @@ POST /developers/v1/publish/commit/{appId}/{versionId}
 - Auto-approval status can be checked via `approval_nodes/get` — if `canAutoApproval: true`, publish/commit will auto-publish
 - The `changeLog` field corresponds to "What's new" / "Update notes" in the UI
 
+### App Lifecycle APIs
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /developers/v1/app/create` | Create a new app (returns `ClientID`) |
+| `POST /developers/v1/app/delete/{appId}` | Delete an unpublished app (published → Forbidden) |
+| `POST /developers/v1/secret/{appId}` | Get App Secret directly (no eye icon needed) |
+| `POST /developers/v1/robot/switch/{appId}` | Enable/disable bot: `{"enable": true}` |
+| `POST /developers/v1/developer_panel/menu_ability` | Register ability: `{"clientId": appId, "ability": ["bot"]}` |
+| `POST /developers/v1/event/{appId}` | Get event config (includes `verificationToken`) |
+| `POST /developers/v1/event/check_url/{appId}` | Set webhook URL: `{"verificationToken": "...", "verificationUrl": "..."}` |
+
+#### App creation body
+
+```json
+POST /developers/v1/app/create
+{
+  "appSceneType": 0,
+  "name": "App Name",
+  "desc": "Description",
+  "avatar": "<icon URL from upload API>",
+  "i18n": { "en_us": { "name": "App Name", "description": "Description" } },
+  "primaryLang": "en_us"
+}
+// Returns: { "code": 0, "data": { "ClientID": "cli_xxx" } }
+```
+
+#### Enabling bot (two steps)
+
+```json
+// Step 1: Enable bot capability
+POST /developers/v1/robot/switch/{appId}
+{ "enable": true }
+
+// Step 2: Register bot in ability list
+POST /developers/v1/developer_panel/menu_ability
+{ "clientId": "{appId}", "ability": ["bot"] }
+```
+
 ### Other useful APIs
 
 | Endpoint | Purpose |
@@ -377,8 +416,42 @@ POST /developers/v1/publish/commit/{appId}/{versionId}
 | `POST /developers/v1/config/audit_rule/{appId}` | Get audit rule config |
 | `POST /developers/v1/visible/online/{appId}` | Get visibility settings |
 | `POST /developers/v1/scope/applied/{appId}` | List applied scopes with details |
+| `POST /developers/v1/app/list` | List all apps: `{"Count": 10, "Cursor": 0, ...}` |
+| `POST /developers/v1/admins/{appId}` | Get app admins |
 
-### CSRF Token
+## Admin Console APIs
 
-The correct CSRF token is `window.csrfToken`, **not** the `lark_oapi_csrf_token` cookie.
-Send it as `x-csrf-token` header on all console API calls.
+The Admin Console is a separate platform at `<tenant>.sg.larksuite.com` (auto-discovered from `https://admin.larksuite.com` redirect).
+
+### Authentication
+
+- Uses `csrf_token` cookie (NOT `window.csrfToken` or `lark_oapi_csrf_token`)
+- Send as `x-csrf-token` header on all admin API calls
+- Without the header, admin APIs return 401 "The login is expired"
+- Navigate to an admin page first to establish the session
+
+### Admin App Management APIs
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `PUT` | `/suite/admin/appcenter/v4/app/{appId}/stop` | Deactivate (stop) an app |
+| `PUT` | `/suite/admin/appcenter/v4/app/{appId}/active` | Re-enable (activate) an app |
+
+Note: Admin Console uses **PUT** method (not POST like Developer Console).
+
+### Force-deleting a published app
+
+Published apps cannot be deleted via the Developer Console API alone. The full flow:
+1. `PUT /suite/admin/appcenter/v4/app/{appId}/stop` — deactivate via Admin Console
+2. Wait (may need propagation delay)
+3. `POST /developers/v1/app/delete/{appId}` — delete via Developer Console
+
+### CSRF Tokens
+
+**Developer Console** (`open.larksuite.com`):
+- Token: `window.csrfToken` (NOT the `lark_oapi_csrf_token` cookie)
+- Send as: `x-csrf-token` header on all POST calls
+
+**Admin Console** (`<tenant>.sg.larksuite.com`):
+- Token: `csrf_token` cookie value
+- Send as: `x-csrf-token` header on all PUT/POST calls
