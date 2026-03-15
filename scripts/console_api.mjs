@@ -25,6 +25,7 @@
  *   node console_api.mjs app enable-bot <appId>
  *   node console_api.mjs app set-webhook <appId> --url <webhookUrl>
  *   node console_api.mjs app set-card-url <appId> --url <cardUrl>
+ *   node console_api.mjs app delete <appId>
  *
  * Options:
  *   --profile <dir>  Playwright profile directory (default: ~/.lark-console/profile)
@@ -569,6 +570,19 @@ async function appSetCardUrl(page, csrf, appId, url) {
   }
 }
 
+// ──── App Delete ────
+
+async function appDelete(page, csrf, appId) {
+  const res = await api(page, csrf, `/developers/v1/app/delete/${appId}`);
+  if (res.code === 0) {
+    console.log(`✓ App ${appId} deleted`);
+  } else if (res.code === 10003) {
+    console.error(`✗ Cannot delete: app is published. Unpublish from Admin Console first.`);
+  } else {
+    console.error(`✗ Delete failed: ${JSON.stringify(res)}`);
+  }
+}
+
 // ──── Main ────
 
 async function main() {
@@ -594,6 +608,7 @@ async function main() {
   node console_api.mjs app enable-bot <appId>
   node console_api.mjs app set-webhook <appId> --url <url>
   node console_api.mjs app set-card-url <appId> --url <url>
+  node console_api.mjs app delete <appId>
 
 Options:
   --profile <dir>   Playwright profile (default: ~/.lark-console/profile)
@@ -631,6 +646,7 @@ Options:
       case "app.enable-bot": await appEnableBot(page, csrfToken, appId); break;
       case "app.set-webhook": await appSetWebhook(page, csrfToken, appId, opts.url); break;
       case "app.set-card-url": await appSetCardUrl(page, csrfToken, appId, opts.url); break;
+      case "app.delete": await appDelete(page, csrfToken, appId); break;
       default:
         console.error(`Unknown command: ${domain} ${action}`);
         process.exit(1);
