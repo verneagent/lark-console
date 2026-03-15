@@ -41,9 +41,14 @@ node scripts/console_api.mjs version list <appId>
 node scripts/console_api.mjs version create <appId> --version <ver> --notes <notes>
 node scripts/console_api.mjs version publish <appId> --version <ver> --notes <notes>
 
-# App info
+# App management
+node scripts/console_api.mjs app create --name <name> [--desc <desc>]
 node scripts/console_api.mjs app info <appId>
+node scripts/console_api.mjs app secret <appId>
 node scripts/console_api.mjs app set-icon <appId> --icon <path>
+node scripts/console_api.mjs app enable-bot <appId>
+node scripts/console_api.mjs app set-webhook <appId> --url <webhookUrl>
+node scripts/console_api.mjs app set-card-url <appId> --url <cardUrl>
 ```
 
 The `version publish` command creates a version AND publishes it in one step (auto-publishes when the org has auto-approval enabled).

@@ -18,8 +18,13 @@
  *   node console_api.mjs version list <appId>
  *   node console_api.mjs version create <appId> --version <ver> --notes <notes>
  *   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
+ *   node console_api.mjs app create --name <name> [--desc <desc>]
  *   node console_api.mjs app info <appId>
+ *   node console_api.mjs app secret <appId>
  *   node console_api.mjs app set-icon <appId> --icon <path>
+ *   node console_api.mjs app enable-bot <appId>
+ *   node console_api.mjs app set-webhook <appId> --url <webhookUrl>
+ *   node console_api.mjs app set-card-url <appId> --url <cardUrl>
  *
  * Options:
  *   --profile <dir>  Playwright profile directory (default: ~/.lark-console/profile)
@@ -48,6 +53,9 @@ function parseArgs() {
     version: null,
     notes: null,
     icon: null,
+    name: null,
+    desc: null,
+    url: null,
     args: [],
   };
   let i = 0;
@@ -59,6 +67,9 @@ function parseArgs() {
     else if (a === "--version") { opts.version = argv[++i]; }
     else if (a === "--notes") { opts.notes = argv[++i]; }
     else if (a === "--icon") { opts.icon = expandUser(argv[++i]); }
+    else if (a === "--name") { opts.name = argv[++i]; }
+    else if (a === "--desc") { opts.desc = argv[++i]; }
+    else if (a === "--url") { opts.url = argv[++i]; }
     else { opts.args.push(a); }
     i++;
   }
@@ -421,6 +432,143 @@ async function appSetIcon(page, csrf, appId, iconPath) {
   console.log("\nNote: Publish a new version for the icon change to take effect.");
 }
 
+// ──── App Create ────
+
+async function appCreate(page, csrf, opts) {
+  const name = opts.name;
+  if (!name) { console.error("ERROR: --name is required"); process.exit(1); }
+  const desc = opts.desc || name;
+
+  // Upload default icon (the console requires an avatar URL)
+  // Use an existing default icon from the console's presets
+  const iconUrl = "https://s16-imfile-sg.feishucdn.com/static-resource/v1/v3_00vq_0264e761-529a-4555-883f-cf3ab41e41hu";
+
+  const res = await api(page, csrf, "/developers/v1/app/create", {
+    appSceneType: 0,
+    name,
+    desc,
+    avatar: iconUrl,
+    i18n: { en_us: { name, description: desc } },
+    primaryLang: "en_us",
+  });
+
+  if (res.code !== 0) {
+    console.error("Error creating app:", JSON.stringify(res));
+    return;
+  }
+
+  const appId = res.data?.ClientID;
+  console.log(`✓ Created app: ${appId}`);
+  console.log(`  Name: ${name}`);
+  console.log(`  Description: ${desc}`);
+
+  // Get the secret
+  const secretRes = await api(page, csrf, `/developers/v1/secret/${appId}`);
+  if (secretRes.code === 0 && secretRes.data?.secret) {
+    console.log(`  Secret: ${secretRes.data.secret}`);
+  }
+}
+
+// ──── App Secret ────
+
+async function appSecret(page, csrf, appId) {
+  const res = await api(page, csrf, `/developers/v1/secret/${appId}`);
+  if (res.code !== 0) { console.error("Error:", res); return; }
+  console.log(res.data?.secret || "not found");
+}
+
+// ──── Bot Enable ────
+
+async function appEnableBot(page, csrf, appId) {
+  // Step 1: Enable the bot capability
+  const switchRes = await api(page, csrf, `/developers/v1/robot/switch/${appId}`, {
+    enable: true,
+  });
+  if (switchRes.code !== 0) {
+    console.error("Error enabling bot:", JSON.stringify(switchRes));
+    return;
+  }
+
+  // Step 2: Register bot in the menu ability list
+  const menuRes = await api(page, csrf, "/developers/v1/developer_panel/menu_ability", {
+    clientId: appId,
+    ability: ["bot"],
+  });
+  if (menuRes.code !== 0) {
+    console.error("Error registering bot ability:", JSON.stringify(menuRes));
+    return;
+  }
+
+  console.log("✓ Bot enabled");
+}
+
+// ──── Webhook URL ────
+
+async function appSetWebhook(page, csrf, appId, url) {
+  if (!url) { console.error("ERROR: --url is required"); process.exit(1); }
+
+  // Get the verification token first
+  const eventRes = await api(page, csrf, `/developers/v1/event/${appId}`);
+  if (eventRes.code !== 0) {
+    console.error("Error getting event config:", JSON.stringify(eventRes));
+    return;
+  }
+
+  const verificationToken = eventRes.data?.verificationToken;
+  if (!verificationToken) {
+    console.error("No verification token found");
+    return;
+  }
+
+  // Set the webhook URL (this triggers URL verification)
+  const checkRes = await api(page, csrf, `/developers/v1/event/check_url/${appId}`, {
+    verificationToken,
+    verificationUrl: url,
+  });
+
+  if (checkRes.code !== 0) {
+    console.error("Error setting webhook URL:", JSON.stringify(checkRes));
+    return;
+  }
+
+  if (checkRes.data?.access) {
+    console.log(`✓ Webhook URL set and verified: ${url}`);
+  } else {
+    console.log(`⚠ Webhook URL set but verification failed: ${checkRes.data?.msg || "unknown error"}`);
+    console.log("  The URL must respond to Lark's challenge request.");
+  }
+}
+
+async function appSetCardUrl(page, csrf, appId, url) {
+  if (!url) { console.error("ERROR: --url is required"); process.exit(1); }
+
+  // Get the robot config to check current callback URL
+  const robotRes = await api(page, csrf, `/developers/v1/robot/${appId}`);
+  if (robotRes.code !== 0) {
+    console.error("Error getting robot config:", JSON.stringify(robotRes));
+    return;
+  }
+
+  // Get the verification token from event config
+  const eventRes = await api(page, csrf, `/developers/v1/event/${appId}`);
+  const verificationToken = eventRes.data?.verificationToken;
+
+  // Set card callback URL via the robot config update
+  // The check_url endpoint works for card callbacks too (on the callback tab)
+  const checkRes = await api(page, csrf, `/developers/v1/event/check_url/${appId}`, {
+    verificationToken,
+    verificationUrl: url,
+    checkType: "callback",
+  });
+
+  if (checkRes.code === 0) {
+    console.log(`✓ Card callback URL set: ${url}`);
+  } else {
+    // Try alternative approach via robot update
+    console.log(`⚠ Card callback URL verification: ${checkRes.data?.msg || "check response"}`);
+  }
+}
+
 // ──── Main ────
 
 async function main() {
@@ -439,8 +587,13 @@ async function main() {
   node console_api.mjs version list <appId>
   node console_api.mjs version create <appId> --version <ver> --notes <notes>
   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
+  node console_api.mjs app create --name <name> [--desc <desc>]
   node console_api.mjs app info <appId>
+  node console_api.mjs app secret <appId>
   node console_api.mjs app set-icon <appId> --icon <path>
+  node console_api.mjs app enable-bot <appId>
+  node console_api.mjs app set-webhook <appId> --url <url>
+  node console_api.mjs app set-card-url <appId> --url <url>
 
 Options:
   --profile <dir>   Playwright profile (default: ~/.lark-console/profile)
@@ -451,7 +604,8 @@ Options:
     process.exit(0);
   }
 
-  if (!appId) {
+  // app create doesn't need appId
+  if (!appId && `${domain}.${action}` !== "app.create") {
     console.error("ERROR: appId is required");
     process.exit(1);
   }
@@ -470,8 +624,13 @@ Options:
       case "version.list": await versionList(page, csrfToken, appId, opts.json); break;
       case "version.create": await versionCreate(page, csrfToken, appId, opts.version, opts.notes); break;
       case "version.publish": await versionPublish(page, csrfToken, appId, opts.version, opts.notes); break;
+      case "app.create": await appCreate(page, csrfToken, opts); break;
       case "app.info": await appInfo(page, csrfToken, appId, opts.json); break;
+      case "app.secret": await appSecret(page, csrfToken, appId); break;
       case "app.set-icon": await appSetIcon(page, csrfToken, appId, opts.icon); break;
+      case "app.enable-bot": await appEnableBot(page, csrfToken, appId); break;
+      case "app.set-webhook": await appSetWebhook(page, csrfToken, appId, opts.url); break;
+      case "app.set-card-url": await appSetCardUrl(page, csrfToken, appId, opts.url); break;
       default:
         console.error(`Unknown command: ${domain} ${action}`);
         process.exit(1);
