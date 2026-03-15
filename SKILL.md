@@ -74,13 +74,26 @@ If a similar app-creation task has already been executed in this repo, also chec
 
 ## Browser-Only Operations
 
-Some console operations have no direct API and require Playwright browser automation (file input + dialog handling). This table should shrink over time as APIs are discovered via network capture.
+Some console operations have no direct API and require Playwright browser automation. This table should shrink over time as APIs are discovered via network capture.
 
-| Operation | Command | Notes |
-|-----------|---------|-------|
-| Icon upload | `app set-icon <appId> --icon <path>` | Uses Playwright file input flow: edit mode → file chooser → crop dialog → save. The internal upload API (`/developers/v1/app/upload/image`) only accepts requests from the UI's React upload component. Icon must be < 2MB, formats: PNG/JPG/SVG/BMP. |
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| *(none currently)* | — | All known operations have API support |
 
 When a browser-only operation is found, add it here. When a direct API is later discovered, update the implementation in `console_api.mjs`.
+
+### API Discovery Notes
+
+The upload API (`/developers/v1/app/upload/image`) requires hidden FormData fields that the UI's upload component adds automatically. These were discovered by monkey-patching `window.fetch` during a UI-triggered upload:
+
+```
+file: <image blob>, filename="image.png"
+uploadType: "4"
+isIsv: "false"
+scale: '{"width":240,"height":240}'
+```
+
+Without `uploadType`, `isIsv`, and `scale`, the server returns `9499 Bad Request`. This pattern likely applies to other console upload endpoints too.
 
 ## Inputs
 

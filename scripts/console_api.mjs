@@ -364,49 +364,62 @@ async function appSetIcon(page, csrf, appId, iconPath) {
     process.exit(1);
   }
 
-  // Navigate to baseinfo page
-  console.log("Navigating to baseinfo...");
-  await page.goto(`https://open.larksuite.com/app/${appId}/baseinfo`, {
-    waitUntil: "networkidle", timeout: 30000,
-  });
-  await sleep(2000);
+  const iconBuffer = fs.readFileSync(iconPath);
+  const iconBase64 = iconBuffer.toString("base64");
 
-  // Click edit pencil next to "General info"
-  const pencil = page.locator("text=General info >> .. >> svg").first();
-  await pencil.click({ timeout: 5000 });
-  console.log("Entered edit mode");
-  await sleep(2000);
+  // Step 1: Upload image via API
+  console.log("Uploading image...");
+  const uploadRes = await page.evaluate(
+    async ({ csrf, base64Data }) => {
+      const byteChars = atob(base64Data);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteArr[i] = byteChars.charCodeAt(i);
+      }
+      const file = new File([byteArr], "image.png", { type: "image/png" });
 
-  // Click icon upload area to trigger file chooser
-  const iconUpload = page.locator('.image-upload-icon, [class*="image-upload"]').first();
-  const [fileChooser] = await Promise.all([
-    page.waitForEvent("filechooser", { timeout: 10000 }),
-    iconUpload.click(),
-  ]);
-  await fileChooser.setFiles(iconPath);
-  console.log("File selected");
-  await sleep(3000);
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("uploadType", "4");
+      fd.append("isIsv", "false");
+      fd.append("scale", JSON.stringify({ width: 240, height: 240 }));
 
-  // Handle crop dialog Save button (if visible)
-  const dialogSave = page.locator('[role="dialog"] button:has-text("Save"), .ud__dialog button:has-text("Save")').first();
-  if (await dialogSave.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await dialogSave.click({ force: true });
-    console.log("Crop dialog saved");
-    await sleep(2000);
+      const res = await fetch("/developers/v1/app/upload/image", {
+        method: "POST",
+        headers: { "x-csrf-token": csrf, "X-Timezone-Offset": String(new Date().getTimezoneOffset()) },
+        body: fd,
+      });
+      return res.json();
+    },
+    { csrf, base64Data: iconBase64 },
+  );
+
+  if (uploadRes.code !== 0) {
+    console.error("Upload failed:", JSON.stringify(uploadRes));
+    return;
   }
 
-  // Click outer form Save
-  const outerSave = page.locator('button:has-text("Save")').first();
-  if (await outerSave.isVisible()) {
-    await outerSave.click({ force: true });
-    await sleep(2000);
+  const imageUrl = uploadRes.data?.url;
+  if (!imageUrl) {
+    console.error("No image URL in response:", JSON.stringify(uploadRes));
+    return;
+  }
+  console.log("✓ Image uploaded");
+
+  // Step 2: Set as app icon via base_info API
+  const setRes = await api(page, csrf, `/developers/v1/base_info/${appId}`, {
+    avatar: imageUrl,
+    homePage: "",
+  });
+
+  if (setRes.code !== 0) {
+    console.error("Set icon failed:", JSON.stringify(setRes));
+    return;
   }
 
   console.log("✓ Icon set successfully");
   console.log("\nNote: Publish a new version for the icon change to take effect.");
 }
-
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // ──── Main ────
 
