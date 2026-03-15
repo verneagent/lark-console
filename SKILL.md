@@ -69,6 +69,17 @@ If a similar app-creation task has already been executed in this repo, also chec
 - Do not rely on undocumented console APIs as the primary solution.
 - If the console DOM changes, update selectors or add a page-specific mapping layer instead of hardcoding brittle text-only paths everywhere.
 - Keep secrets out of source control. Persist any captured `App ID` or `App Secret` only in user-approved locations.
+- **API discovery rule**: When a new console API endpoint is discovered (by inspecting network requests, trying endpoints, or observing browser automation), always add it to `scripts/console_api.mjs` as a new subcommand. Document the endpoint path, method, and payload in `references/selector-notes.md`. The goal is to grow the API client over time so browser automation is only needed for truly UI-only operations.
+
+## Browser-Only Operations
+
+Some console operations have no known API and require Playwright browser automation:
+
+| Operation | Why browser-only | Notes |
+|-----------|-----------------|-------|
+| Icon upload | `/developers/v1/app/update_avatar/` and `/developers/v1/image/upload` return 404 | Flow: edit pencil → icon area click → file chooser → crop dialog Save → form Save. Icon must be < 2MB. |
+
+When a browser-only operation is later found to have an API, move it out of this table and add the API to `console_api.mjs`.
 
 ## Inputs
 
