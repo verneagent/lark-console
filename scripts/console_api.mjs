@@ -308,6 +308,18 @@ async function versionCreate(page, csrf, appId, version, notes) {
     applyReasonConfig: applyConfig,
   });
 
+  if (createRes.code === 10043) {
+    // "Version Created, Refresh Again" — a draft already exists, find it in version list
+    const listRes = await api(page, csrf, `/developers/v1/app_version/list/${appId}`);
+    const draft = (listRes.data?.versions || []).find(v => v.versionStatus === 0);
+    if (draft) {
+      console.log(`✓ Using existing draft version ${draft.appVersion} (ID: ${draft.versionId})`);
+      return draft.versionId;
+    }
+    console.error("Error: draft exists but could not find it in version list");
+    return null;
+  }
+
   if (createRes.code !== 0) {
     console.error("Error creating version:", JSON.stringify(createRes));
     return null;
