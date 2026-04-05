@@ -245,6 +245,26 @@ async function callbacksRemove(page, csrf, appId, callbacks) {
   console.log(`Remove callbacks: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
 }
 
+async function callbacksSetMode(page, csrf, appId, mode) {
+  // Discovered via browser capture: persistent connection uses mode 4.
+  // Two separate endpoints: /event/switch/ and /callback/switch/
+  const modeMap = { http: 1, ws: 4, websocket: 4, persistent: 4 };
+  const modeVal = modeMap[mode?.toLowerCase()];
+  if (!modeVal) {
+    console.error("ERROR: mode must be 'http' or 'ws'");
+    return;
+  }
+  const label = modeVal === 4 ? "WebSocket (persistent connection)" : "HTTP";
+  const evRes = await api(page, csrf, `/developers/v1/event/switch/${appId}`, {
+    eventMode: modeVal,
+  });
+  console.log(`Event subscription mode: ${evRes.code === 0 ? "✓ " + label : "✗ " + JSON.stringify(evRes)}`);
+  const cbRes = await api(page, csrf, `/developers/v1/callback/switch/${appId}`, {
+    callbackMode: modeVal,
+  });
+  console.log(`Card callback mode: ${cbRes.code === 0 ? "✓ " + label : "✗ " + JSON.stringify(cbRes)}`);
+}
+
 // ──── Versions ────
 
 async function versionList(page, csrf, appId, jsonMode) {
@@ -707,6 +727,7 @@ async function main() {
   node console_api.mjs callbacks list <appId>
   node console_api.mjs callbacks add <appId> <cb1> [cb2 ...]
   node console_api.mjs callbacks remove <appId> <cb1> [cb2 ...]
+  node console_api.mjs callbacks set-mode <appId> <http|ws>
   node console_api.mjs version list <appId>
   node console_api.mjs version create <appId> --version <ver> --notes <notes>
   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
@@ -748,6 +769,7 @@ Options:
       case "callbacks.list": await callbacksList(page, csrfToken, appId, opts.json); break;
       case "callbacks.add": await callbacksAdd(page, csrfToken, appId, rest); break;
       case "callbacks.remove": await callbacksRemove(page, csrfToken, appId, rest); break;
+      case "callbacks.set-mode": await callbacksSetMode(page, csrfToken, appId, rest[0]); break;
       case "version.list": await versionList(page, csrfToken, appId, opts.json); break;
       case "version.create": await versionCreate(page, csrfToken, appId, opts.version, opts.notes); break;
       case "version.publish": await versionPublish(page, csrfToken, appId, opts.version, opts.notes); break;
