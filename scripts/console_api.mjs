@@ -417,14 +417,19 @@ async function appSetIcon(page, csrf, appId, iconPath) {
 
   // Step 1: Upload image via API
   console.log("Uploading image...");
+  const ext = iconPath.split(".").pop().toLowerCase();
+  const mimeMap = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+  const mime = mimeMap[ext] || "image/png";
+  const fileName = `image.${ext === "jpeg" ? "jpg" : ext}`;
+
   const uploadRes = await page.evaluate(
-    async ({ csrf, base64Data }) => {
+    async ({ csrf, base64Data, mime, fileName }) => {
       const byteChars = atob(base64Data);
       const byteArr = new Uint8Array(byteChars.length);
       for (let i = 0; i < byteChars.length; i++) {
         byteArr[i] = byteChars.charCodeAt(i);
       }
-      const file = new File([byteArr], "image.png", { type: "image/png" });
+      const file = new File([byteArr], fileName, { type: mime });
 
       const fd = new FormData();
       fd.append("file", file);
@@ -439,7 +444,7 @@ async function appSetIcon(page, csrf, appId, iconPath) {
       });
       return res.json();
     },
-    { csrf, base64Data: iconBase64 },
+    { csrf, base64Data: iconBase64, mime, fileName },
   );
 
   if (uploadRes.code !== 0) {
@@ -579,30 +584,17 @@ async function appSetWebhook(page, csrf, appId, url) {
 async function appSetCardUrl(page, csrf, appId, url) {
   if (!url) { console.error("ERROR: --url is required"); process.exit(1); }
 
-  // Get the robot config to check current callback URL
-  const robotRes = await api(page, csrf, `/developers/v1/robot/${appId}`);
-  if (robotRes.code !== 0) {
-    console.error("Error getting robot config:", JSON.stringify(robotRes));
-    return;
-  }
-
-  // Get the verification token from event config
-  const eventRes = await api(page, csrf, `/developers/v1/event/${appId}`);
-  const verificationToken = eventRes.data?.verificationToken;
-
-  // Set card callback URL via the robot config update
-  // The check_url endpoint works for card callbacks too (on the callback tab)
-  const checkRes = await api(page, csrf, `/developers/v1/event/check_url/${appId}`, {
-    verificationToken,
+  // The callback page persists the URL through callback/update_url.
+  // robot.cardRequestUrl remains empty in console responses even after save;
+  // callback.verificationUrl is the actual source of truth for HTTP callback mode.
+  const updateRes = await api(page, csrf, `/developers/v1/callback/update_url/${appId}`, {
     verificationUrl: url,
-    checkType: "callback",
   });
 
-  if (checkRes.code === 0) {
+  if (updateRes.code === 0) {
     console.log(`✓ Card callback URL set: ${url}`);
   } else {
-    // Try alternative approach via robot update
-    console.log(`⚠ Card callback URL verification: ${checkRes.data?.msg || "check response"}`);
+    console.error("Error setting card callback URL:", JSON.stringify(updateRes));
   }
 }
 
