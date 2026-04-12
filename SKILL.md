@@ -32,9 +32,16 @@ node scripts/console_api.mjs scopes find <appId> <keyword>
 node scripts/console_api.mjs scopes add <appId> <scopeId1> [scopeId2 ...]
 node scripts/console_api.mjs scopes remove <appId> <scopeId1> [scopeId2 ...]
 
-# Callback management
+# Callback management (card actions only — NOT event subscriptions)
 node scripts/console_api.mjs callbacks list <appId>
 node scripts/console_api.mjs callbacks add <appId> <callback1> [callback2 ...]
+node scripts/console_api.mjs callbacks remove <appId> <callback1> [callback2 ...]
+node scripts/console_api.mjs callbacks set-mode <appId> <http|ws>
+
+# Event subscription management (im.message.receive_v1, etc.)
+node scripts/console_api.mjs events list <appId>
+node scripts/console_api.mjs events add <appId> <event1> [event2 ...]
+node scripts/console_api.mjs events remove <appId> <event1> [event2 ...]
 
 # Version management
 node scripts/console_api.mjs version list <appId>
@@ -73,6 +80,40 @@ When the task involves console navigation details or scope cloning, read these r
 - [references/selector-notes.md](references/selector-notes.md)
 
 If a similar app-creation task has already been executed in this repo, also check the relevant sanitized case note under `references/`.
+
+## Pitfalls & Gotchas
+
+### Events ≠ Callbacks
+
+The console has **two separate systems** that look like one:
+- **Events** (`/developers/v1/event/...`): Lark platform events like `im.message.receive_v1`
+- **Callbacks** (`/developers/v1/callback/...`): Card interaction callbacks like `card.action.trigger`
+
+`callbacks add` does NOT register event subscriptions. Use `events add` for events. See [references/selector-notes.md](references/selector-notes.md) for the full API contract.
+
+### event/update requires `appEvents`, not `events`
+
+The `POST /developers/v1/event/update/{appId}` endpoint has a confusing body format. The `events` field is **read-only**. To add events, put them in `appEvents`:
+
+```json
+{ "operation": "add", "events": [], "appEvents": ["im.message.receive_v1"], "userEvents": [], "eventMode": 4 }
+```
+
+### callbackMode / eventMode must match current value
+
+When calling `callback/update` or `event/update`, the mode field (`callbackMode` / `eventMode`) must match the app's current mode. Sending `callbackMode: 1` when the app is in WS mode (4) returns `ParamInvalid`. The `console_api.mjs` now queries the current mode automatically.
+
+### Version publish is required after config changes
+
+Scope additions, event registrations, callback changes, and mode switches only take effect after publishing a new app version. Order matters: `set mode → add events/callbacks → version publish`.
+
+### All console APIs use POST
+
+Even "read" endpoints like `/developers/v1/scope/{appId}` require POST with `Content-Type: application/json`. GET requests return 404.
+
+### E2E test
+
+Run `node scripts/e2e_test.mjs` to verify all set/get round-trips work. It creates a temporary app, exercises every API, then deletes it. Use `--headed` to see the browser, `--keep` to skip deletion.
 
 ## Rules
 

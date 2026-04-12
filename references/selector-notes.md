@@ -244,53 +244,64 @@ To discover IDs for scopes not listed here, call `/developers/v1/scope/all/{appI
 - Use `/scope/all/` (not `/scope/applied/`) to see the true status of all scopes
 - The `appScopeIDs` field uses numeric string IDs (e.g. `"21001"`), not scope names
 
-### Event and Callback APIs
+### Event and Callback APIs — TWO SEPARATE SYSTEMS
 
-Events and card callbacks can also be managed via the same API pattern:
+**CRITICAL**: Events and callbacks are managed by **different API endpoints** despite appearing on the same console page. Do not confuse them:
 
-```json
-POST /developers/v1/callback/update/{appId}
-{
-  "operation": "add",
-  "callbacks": ["im.message.receive_v1", "im.message.reaction.created_v1"],
-  "callbackMode": 1
-}
-```
+| Concept | API Prefix | What it manages |
+|---------|-----------|-----------------|
+| **Event subscriptions** | `/developers/v1/event/` | `im.message.receive_v1`, `contact.*`, etc. — incoming Lark events |
+| **Card callbacks** | `/developers/v1/callback/` | `card.action.trigger`, etc. — interactive card actions |
 
-This works for both event subscriptions and card callbacks. No need to set subscription mode or URL separately if using the API.
+They share a single mode switch (`eventMode` / `callbackMode`: 1=HTTP, 4=WebSocket), but add/remove/list are completely separate APIs with **different request body formats**.
 
-## Callback Configuration Page
-
-Route:
-
-```text
-/app/:appId/event?tab=callback
-```
-
-### Internal Console APIs
-
-The console makes these authenticated POST calls with `x-csrf-token` header
-(read from `window.csrfToken` on any console page):
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /developers/v1/callback/{appId}` | Get current callback config (mode, URL, subscribed callbacks) |
-| `POST /developers/v1/callback/all/{appId}` | List all available callback types |
-| `POST /developers/v1/callback/update/{appId}` | Add or remove callback subscriptions |
-| `POST /developers/v1/robot/{appId}` | Get bot config including `cardCallbackMode` |
-
-#### Adding callbacks via API
+#### Card callbacks
 
 ```json
 POST /developers/v1/callback/update/{appId}
 {
   "operation": "add",
   "callbacks": ["card.action.trigger"],
-  "callbackMode": 1
+  "callbackMode": 4
 }
 ```
 
-Returns `{ "code": 0, "data": { "Head": { "RespFormat": 0 } }, "msg": "" }` on success.
+**`callbackMode` must match the current mode.** If the app is in WS mode (4) and you send `callbackMode: 1`, the API returns `ParamInvalid`. Always query the current mode first via `POST /developers/v1/callback/{appId}`.
+
+#### Event subscriptions
+
+```json
+POST /developers/v1/event/update/{appId}
+{
+  "operation": "add",
+  "events": [],
+  "appEvents": ["im.message.receive_v1"],
+  "userEvents": [],
+  "eventMode": 4
+}
+```
+
+**Use `appEvents`, not `events`.** The `events` field is for reading; `appEvents` and `userEvents` are for writing. Sending events in the `events` field is silently ignored. The `eventMode` must also be included and match the current mode.
+
+## Callback Configuration Page
+
+Route: `/app/:appId/event?tab=callback`
+
+Event Configuration Route: `/app/:appId/event`
+
+#### Mode switching
+
+Two separate endpoints — one for events, one for callbacks:
+
+```json
+POST /developers/v1/event/switch/{appId}
+{ "eventMode": 4 }    // 1=HTTP, 4=WebSocket (persistent connection)
+
+POST /developers/v1/callback/switch/{appId}
+{ "callbackMode": 4 }
+```
+
+**After switching mode or adding events/callbacks, you MUST publish a new app version for changes to take effect.** Correct sequence: set mode → add events → version publish. If you change mode mid-way (e.g. 4→1→4), each change requires a new version publish.
 
 ### ud__checkbox Issue
 
@@ -298,10 +309,16 @@ The Lark Console `ud__checkbox` component ignores all programmatic interactions:
 `element.click()`, Playwright `check()`, `dispatchEvent`, React fiber `onChange`,
 coordinate-based clicks. The checkbox visually exists but does not toggle.
 
-Workaround: use the `callback/update` API directly instead of clicking checkboxes
-in the "Add callback" modal. The `configureInteractiveCard()` function in the
-provisioning script automatically falls back to this API when `selectItemsInModal()`
-fails to check the checkbox.
+**Workaround for callbacks**: use the `callback/update` API directly.
+
+**Workaround for events**: use the `event/update` API with the `appEvents` field. When the UI's "Add Events" button is clicked, the browser sends the correct payload including `appEvents` and `eventMode`. The `selectItemsInModal()` + `addEventsViaAPI()` fallback in the provisioning script handles this.
+
+**Important**: the `addEventsViaAPI` function in `provision_lark_app.mjs` sends `{ operation: "add", events: [...] }` — this is WRONG for some modes. The correct field is `appEvents`. The function works when called from the provision flow because the page state provides context, but calling `event/update` directly with just `events` may silently do nothing. Always use `appEvents`.
+
+### Scope API Notes
+
+- `POST /developers/v1/scope/{appId}` returns `data.scopes` as an array of **string IDs** (e.g. `["1000", "14"]`), not objects
+- All console APIs use **POST**, even for reads. GET requests return 404.
 
 ## Version Management via Console API
 
@@ -375,8 +392,14 @@ POST /developers/v1/publish/commit/{appId}/{versionId}
 | `POST /developers/v1/secret/{appId}` | Get App Secret directly (no eye icon needed) |
 | `POST /developers/v1/robot/switch/{appId}` | Enable/disable bot: `{"enable": true}` |
 | `POST /developers/v1/developer_panel/menu_ability` | Register ability: `{"clientId": appId, "ability": ["bot"]}` |
-| `POST /developers/v1/event/{appId}` | Get event config (includes `verificationToken`) |
+| `POST /developers/v1/event/{appId}` | Get event config (includes `verificationToken`, `events`, `eventMode`) |
+| `POST /developers/v1/event/update/{appId}` | Add/remove event subscriptions (use `appEvents` field, not `events`) |
+| `POST /developers/v1/event/switch/{appId}` | Switch event mode: `{"eventMode": 1\|4}` (1=HTTP, 4=WebSocket) |
+| `POST /developers/v1/event/all/{appId}` | List all available event types for subscription |
 | `POST /developers/v1/event/check_url/{appId}` | Set webhook URL: `{"verificationToken": "...", "verificationUrl": "..."}` |
+| `POST /developers/v1/callback/{appId}` | Get callback config (mode, URL, subscribed callbacks) |
+| `POST /developers/v1/callback/update/{appId}` | Add/remove callbacks (`callbackMode` must match current mode) |
+| `POST /developers/v1/callback/switch/{appId}` | Switch callback mode: `{"callbackMode": 1\|4}` |
 
 #### App creation body
 
