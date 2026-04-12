@@ -228,19 +228,24 @@ async function callbacksList(page, csrf, appId, jsonMode) {
 }
 
 async function callbacksAdd(page, csrf, appId, callbacks) {
+  // Query current mode so we don't send the wrong callbackMode
+  const current = await api(page, csrf, `/developers/v1/callback/${appId}`);
+  const mode = current.data?.callbackMode ?? 1;
   const res = await api(page, csrf, `/developers/v1/callback/update/${appId}`, {
     operation: "add",
     callbacks,
-    callbackMode: 1,
+    callbackMode: mode,
   });
   console.log(`Add callbacks: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
 }
 
 async function callbacksRemove(page, csrf, appId, callbacks) {
+  const current = await api(page, csrf, `/developers/v1/callback/${appId}`);
+  const mode = current.data?.callbackMode ?? 1;
   const res = await api(page, csrf, `/developers/v1/callback/update/${appId}`, {
     operation: "del",
     callbacks,
-    callbackMode: 1,
+    callbackMode: mode,
   });
   console.log(`Remove callbacks: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
 }
@@ -263,6 +268,54 @@ async function callbacksSetMode(page, csrf, appId, mode) {
     callbackMode: modeVal,
   });
   console.log(`Card callback mode: ${cbRes.code === 0 ? "✓ " + label : "✗ " + JSON.stringify(cbRes)}`);
+}
+
+// ──── Events ────
+
+async function eventsList(page, csrf, appId, jsonMode) {
+  const res = await api(page, csrf, `/developers/v1/event/${appId}`);
+  if (res.code !== 0) { console.error("Error:", res); return; }
+
+  if (jsonMode) {
+    console.log(JSON.stringify(res.data, null, 2));
+    return;
+  }
+
+  const events = res.data?.events || [];
+  const mode = res.data?.eventMode;
+  const modeLabel = mode === 4 ? "WebSocket (persistent connection)" : mode === 1 ? "HTTP" : mode;
+  console.log(`Event mode: ${modeLabel}`);
+  console.log(`Subscribed events (${events.length}):`);
+  for (const ev of events) {
+    console.log(`  ✓ ${ev}`);
+  }
+}
+
+async function eventsAdd(page, csrf, appId, events) {
+  // Query current eventMode to include in the request
+  const current = await api(page, csrf, `/developers/v1/event/${appId}`);
+  const eventMode = current.data?.eventMode ?? 1;
+  const res = await api(page, csrf, `/developers/v1/event/update/${appId}`, {
+    operation: "add",
+    events: [],
+    appEvents: events,
+    userEvents: [],
+    eventMode,
+  });
+  console.log(`Add events: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
+}
+
+async function eventsRemove(page, csrf, appId, events) {
+  const current = await api(page, csrf, `/developers/v1/event/${appId}`);
+  const eventMode = current.data?.eventMode ?? 1;
+  const res = await api(page, csrf, `/developers/v1/event/update/${appId}`, {
+    operation: "del",
+    events: [],
+    appEvents: events,
+    userEvents: [],
+    eventMode,
+  });
+  console.log(`Remove events: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
 }
 
 // ──── Versions ────
@@ -720,6 +773,9 @@ async function main() {
   node console_api.mjs callbacks add <appId> <cb1> [cb2 ...]
   node console_api.mjs callbacks remove <appId> <cb1> [cb2 ...]
   node console_api.mjs callbacks set-mode <appId> <http|ws>
+  node console_api.mjs events list <appId>
+  node console_api.mjs events add <appId> <event1> [event2 ...]
+  node console_api.mjs events remove <appId> <event1> [event2 ...]
   node console_api.mjs version list <appId>
   node console_api.mjs version create <appId> --version <ver> --notes <notes>
   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
@@ -762,6 +818,9 @@ Options:
       case "callbacks.add": await callbacksAdd(page, csrfToken, appId, rest); break;
       case "callbacks.remove": await callbacksRemove(page, csrfToken, appId, rest); break;
       case "callbacks.set-mode": await callbacksSetMode(page, csrfToken, appId, rest[0]); break;
+      case "events.list": await eventsList(page, csrfToken, appId, opts.json); break;
+      case "events.add": await eventsAdd(page, csrfToken, appId, rest); break;
+      case "events.remove": await eventsRemove(page, csrfToken, appId, rest); break;
       case "version.list": await versionList(page, csrfToken, appId, opts.json); break;
       case "version.create": await versionCreate(page, csrfToken, appId, opts.version, opts.notes); break;
       case "version.publish": await versionPublish(page, csrfToken, appId, opts.version, opts.notes); break;
