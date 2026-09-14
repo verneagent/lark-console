@@ -242,7 +242,7 @@ To discover IDs for scopes not listed here, call `/developers/v1/scope/all/{appI
 - Removed scopes (status=0) persist in the scope list until a version is published
 - Removed scopes with unconfigured "data permissions" will block version creation — you must configure or fully clear data permissions before publishing
 - Use `/scope/all/` (not `/scope/applied/`) to see the true status of all scopes
-- The `appScopeIDs` field uses numeric string IDs (e.g. `"21001"`), not scope names
+- The `appScopeIDs` field uses numeric string IDs (e.g. `"21001"`), not scope names. Sending a name returns a bare `{"code":10002,"msg":"ParamInvalid"}` with no indication of the cause — resolve against `/scope/all/` and pass `String(s.id)`. The `scopes add`/`scopes remove` subcommands of `console_api.mjs` do this resolution for you and accept either form.
 
 ### Event and Callback APIs — TWO SEPARATE SYSTEMS
 
@@ -409,12 +409,22 @@ POST /developers/v1/app/create
   "appSceneType": 0,
   "name": "App Name",
   "desc": "Description",
-  "avatar": "<icon URL from upload API>",
+  "avatar": "<URL returned by POST /developers/v1/app/upload/image>",
   "i18n": { "en_us": { "name": "App Name", "description": "Description" } },
   "primaryLang": "en_us"
 }
 // Returns: { "code": 0, "data": { "ClientID": "cli_xxx" } }
 ```
+
+`avatar` is not "any image URL" — it must be the `data.url` the console's own upload endpoint issued for this app. Verified against the live tenant:
+
+| `avatar` value | Result |
+|---|---|
+| `data.url` from `app/upload/image` | `code: 0` |
+| a live Lark CDN image URL | `{"code":10002,"msg":"ParamInvalid"}`, `data.Avatar` empty |
+| omitted | `{"code":9499,"msg":"Bad Request"}` |
+
+Omitting it also rules out "just create the app without an icon and set it later" — the icon is mandatory at creation.
 
 #### Enabling bot (two steps)
 
@@ -468,6 +478,14 @@ Published apps cannot be deleted via the Developer Console API alone. The full f
 1. `PUT /suite/admin/appcenter/v4/app/{appId}/stop` — deactivate via Admin Console
 2. Wait (may need propagation delay)
 3. `POST /developers/v1/app/delete/{appId}` — delete via Developer Console
+
+**Step 2 is not optional in practice, and step 3 fails silently without it.** Reaching the Admin Console navigates the page to the `<tenant>.sg.larksuite.com` origin, and Developer Console calls use *relative* paths — so step 3 resolves against the admin origin unless the page is navigated back to `open.larksuite.com` first. The failure looks like:
+
+```
+✗ Delete failed: {"code":-1,"text":"<html>...<title>404 Not Found</title>...TLB..."}
+```
+
+Note the shape: `code: -1` with `text` instead of JSON. There is no auth error, and the app is left **stopped but not deleted** — a half-finished state that `app delete` without `--force` will not clean up either, because the stop already succeeded. `ensureConsoleOrigin()` in `console_api.mjs` handles the navigation before every `api()` call.
 
 ### CSRF Tokens
 

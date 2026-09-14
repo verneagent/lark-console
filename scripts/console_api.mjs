@@ -9,8 +9,8 @@
  *
  * Usage:
  *   node console_api.mjs scopes list <appId>
- *   node console_api.mjs scopes add <appId> <scopeId1> [scopeId2 ...]
- *   node console_api.mjs scopes remove <appId> <scopeId1> [scopeId2 ...]
+ *   node console_api.mjs scopes add <appId> <scope1> [scope2 ...]
+ *   node console_api.mjs scopes remove <appId> <scope1> [scope2 ...]
  *   node console_api.mjs scopes find <appId> <keyword>
  *   node console_api.mjs callbacks list <appId>
  *   node console_api.mjs callbacks add <appId> <callback1> [callback2 ...]
@@ -18,7 +18,7 @@
  *   node console_api.mjs version list <appId>
  *   node console_api.mjs version create <appId> --version <ver> --notes <notes>
  *   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
- *   node console_api.mjs app create --name <name> [--desc <desc>]
+ *   node console_api.mjs app create --name <name> [--desc <desc>] [--icon <path>]
  *   node console_api.mjs app info <appId>
  *   node console_api.mjs app secret <appId>
  *   node console_api.mjs app set-icon <appId> --icon <path>
@@ -39,6 +39,25 @@ import { chromium } from "playwright";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_ICON = path.join(SKILL_ROOT, "assets", "default-app-icon.png");
+
+// Failure must be visible in the exit code, not only in stderr prose. An agent
+// or CI driving this CLI reads `$?`, and every `console.error(...); return;`
+// path used to report a hard failure while still exiting 0 — which is how a
+// half-finished `app delete --force` went unnoticed.
+//
+// Rather than trusting four dozen call sites to remember `process.exitCode = 1`
+// (and every future one), flip it here at the single choke point: writing to
+// stderr means the command failed. The one informational use of console.error
+// — the headed-login prompt — is deliberately a console.log instead.
+const stderrWrite = console.error.bind(console);
+console.error = (...args) => {
+  process.exitCode = 1;
+  stderrWrite(...args);
+};
 
 function expandUser(p) {
   if (!p) return p;
@@ -99,7 +118,9 @@ async function getAuthContext(profileDir, headed) {
   const url = page.url();
   if (url.includes("login") || url.includes("passport")) {
     if (headed) {
-      console.error("Not logged in. Please log in in the browser window...");
+      // console.log, not console.error: this is a prompt, not a failure — see
+      // the console.error wrapper at the top of this file.
+      console.log("Not logged in. Please log in in the browser window...");
       await page.waitForURL(/\/app/, { timeout: 120000 });
     } else {
       console.error("ERROR: Not logged in. Run with --headed to log in manually.");
@@ -118,7 +139,20 @@ async function getAuthContext(profileDir, headed) {
   return { browser, page, csrfToken };
 }
 
+const CONSOLE_ORIGIN = "https://open.larksuite.com";
+
+// The Admin Console helpers (adminStop / adminActivate) navigate the page to
+// admin.larksuite.com to pick up that domain's cookies, and never navigate
+// back. `api()` issues *relative* fetches, so any call made after one of them
+// resolves against the admin origin and comes back as an HTML 404 rather than
+// JSON — which is how `app delete --force` silently lost its delete step.
+async function ensureConsoleOrigin(page) {
+  if (page.url().startsWith(CONSOLE_ORIGIN)) return;
+  await page.goto(`${CONSOLE_ORIGIN}/app`, { waitUntil: "domcontentloaded", timeout: 30000 });
+}
+
 async function api(page, csrfToken, endpoint, body = {}) {
+  await ensureConsoleOrigin(page);
   return page.evaluate(
     async ({ ep, csrf, body }) => {
       const res = await fetch(ep, {
@@ -181,28 +215,75 @@ async function scopesFind(page, csrf, appId, keyword) {
   }
 }
 
-async function scopesAdd(page, csrf, appId, scopeIds) {
-  for (const id of scopeIds) {
+// scope/update only accepts NUMERIC scope IDs. Passing a scope name straight
+// through (e.g. `scopes add <appId> im:chat.announcement:read`) gets a bare
+// `{"code":10002,"msg":"ParamInvalid"}` with no hint about why, so resolve
+// names against the catalog before calling it.
+async function resolveScopes(page, csrf, appId, tokens) {
+  if (!tokens.length) {
+    throw new Error("at least one scope name or numeric ID is required");
+  }
+  const res = await api(page, csrf, `/developers/v1/scope/all/${appId}`);
+  if (res.code !== 0) throw new Error(`scope/all failed: ${JSON.stringify(res)}`);
+  const catalog = res.data?.scopes || [];
+  const byName = new Map(catalog.map((s) => [s.name?.toLowerCase(), s]));
+  const byId = new Map(catalog.map((s) => [String(s.id), s]));
+
+  return tokens.map((token) => {
+    if (/^\d+$/.test(token)) {
+      const hit = byId.get(token);
+      if (!hit) throw new Error(`scope ID ${token} is not in this app's scope catalog`);
+      return hit;
+    }
+    const exact = byName.get(token.toLowerCase());
+    if (exact) return exact;
+
+    const partial = catalog.filter((s) => s.name?.toLowerCase().includes(token.toLowerCase()));
+    if (partial.length === 1) return partial[0];
+    if (partial.length === 0) throw new Error(`no scope matches "${token}"`);
+    throw new Error(
+      `"${token}" is ambiguous — matches: ${partial.map((s) => s.name).join(", ")}`,
+    );
+  });
+}
+
+// status: 0 = not added, 1 = added but not published, 5 = active
+const scopeState = (s) => (s.status === 5 ? "active" : s.status === 1 ? "pending" : "absent");
+
+async function scopesAdd(page, csrf, appId, tokens) {
+  for (const s of await resolveScopes(page, csrf, appId, tokens)) {
+    if (s.status === 5 || s.status === 1) {
+      console.log(`  Add scope ${s.name} (ID: ${s.id}): already ${scopeState(s)}, skipped`);
+      continue;
+    }
     const res = await api(page, csrf, `/developers/v1/scope/update/${appId}`, {
-      appScopeIDs: [id],
+      appScopeIDs: [String(s.id)],
       userScopeIDs: [],
       scopeIds: [],
       operation: "add",
     });
-    console.log(`  Add scope ${id}: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
+    console.log(
+      `  Add scope ${s.name} (ID: ${s.id}): ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`,
+    );
   }
   console.log("\nNote: Publish a new version for changes to take effect.");
 }
 
-async function scopesRemove(page, csrf, appId, scopeIds) {
-  for (const id of scopeIds) {
+async function scopesRemove(page, csrf, appId, tokens) {
+  for (const s of await resolveScopes(page, csrf, appId, tokens)) {
+    if (s.status === 0) {
+      console.log(`  Remove scope ${s.name} (ID: ${s.id}): not added, skipped`);
+      continue;
+    }
     const res = await api(page, csrf, `/developers/v1/scope/update/${appId}`, {
-      appScopeIDs: [id],
+      appScopeIDs: [String(s.id)],
       userScopeIDs: [],
       scopeIds: [],
       operation: "del",
     });
-    console.log(`  Remove scope ${id}: ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`);
+    console.log(
+      `  Remove scope ${s.name} (ID: ${s.id}): ${res.code === 0 ? "✓" : "✗ " + JSON.stringify(res)}`,
+    );
   }
   console.log("\nNote: Publish a new version for changes to take effect.");
 }
@@ -455,25 +536,24 @@ async function appInfo(page, csrf, appId, jsonMode) {
 
 // ──── Icon ────
 
-async function appSetIcon(page, csrf, appId, iconPath) {
-  if (!iconPath) { console.error("ERROR: --icon <path> is required"); process.exit(1); }
-  if (!fs.existsSync(iconPath)) { console.error(`ERROR: File not found: ${iconPath}`); process.exit(1); }
+// `avatar` must be a URL issued by the console's own upload endpoint. An
+// arbitrary image URL — even a live Lark CDN link — is rejected with
+// `{"code":10002,"msg":"ParamInvalid"}` and an empty Avatar, and omitting the
+// field entirely is `9499 Bad Request`. Both app/create and base_info need it,
+// so they share this one path rather than passing a URL around by hand.
+async function uploadIcon(page, csrf, iconPath) {
+  if (!fs.existsSync(iconPath)) throw new Error(`icon file not found: ${iconPath}`);
 
   const stat = fs.statSync(iconPath);
   if (stat.size > 2 * 1024 * 1024) {
-    console.error(`ERROR: Icon must be under 2MB (got ${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
-    process.exit(1);
+    throw new Error(`icon must be under 2MB (got ${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
   }
 
-  const iconBuffer = fs.readFileSync(iconPath);
-  const iconBase64 = iconBuffer.toString("base64");
-
-  // Step 1: Upload image via API
-  console.log("Uploading image...");
   const ext = iconPath.split(".").pop().toLowerCase();
   const mimeMap = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
   const mime = mimeMap[ext] || "image/png";
   const fileName = `image.${ext === "jpeg" ? "jpg" : ext}`;
+  const iconBase64 = fs.readFileSync(iconPath).toString("base64");
 
   const uploadRes = await page.evaluate(
     async ({ csrf, base64Data, mime, fileName }) => {
@@ -500,16 +580,18 @@ async function appSetIcon(page, csrf, appId, iconPath) {
     { csrf, base64Data: iconBase64, mime, fileName },
   );
 
-  if (uploadRes.code !== 0) {
-    console.error("Upload failed:", JSON.stringify(uploadRes));
-    return;
-  }
-
+  if (uploadRes.code !== 0) throw new Error(`icon upload failed: ${JSON.stringify(uploadRes)}`);
   const imageUrl = uploadRes.data?.url;
-  if (!imageUrl) {
-    console.error("No image URL in response:", JSON.stringify(uploadRes));
-    return;
-  }
+  if (!imageUrl) throw new Error(`icon upload returned no url: ${JSON.stringify(uploadRes)}`);
+  return imageUrl;
+}
+
+async function appSetIcon(page, csrf, appId, iconPath) {
+  if (!iconPath) { console.error("ERROR: --icon <path> is required"); process.exit(1); }
+
+  // Step 1: Upload image via API
+  console.log("Uploading image...");
+  const imageUrl = await uploadIcon(page, csrf, iconPath);
   console.log("✓ Image uploaded");
 
   // Step 2: Set as app icon via base_info API
@@ -533,16 +615,20 @@ async function appCreate(page, csrf, opts) {
   const name = opts.name;
   if (!name) { console.error("ERROR: --name is required"); process.exit(1); }
   const desc = opts.desc || name;
+  const iconPath = opts.icon || DEFAULT_ICON;
 
-  // Upload default icon (the console requires an avatar URL)
-  // Use an existing default icon from the console's presets
-  const iconUrl = "https://s16-imfile-sg.feishucdn.com/static-resource/v1/v3_00vq_0264e761-529a-4555-883f-cf3ab41e41hu";
+  // Create requires an avatar, and the avatar must come from the upload API —
+  // see uploadIcon(). Passing a hand-picked CDN URL here is what used to make
+  // every `app create` fail with a bare ParamInvalid.
+  console.log(`Uploading icon (${iconPath})...`);
+  const avatar = await uploadIcon(page, csrf, iconPath);
+  console.log("✓ Icon uploaded");
 
   const res = await api(page, csrf, "/developers/v1/app/create", {
     appSceneType: 0,
     name,
     desc,
-    avatar: iconUrl,
+    avatar,
     i18n: { en_us: { name, description: desc } },
     primaryLang: "en_us",
   });
@@ -766,8 +852,8 @@ async function main() {
   if (!domain || !action) {
     console.log(`Usage:
   node console_api.mjs scopes list <appId>
-  node console_api.mjs scopes add <appId> <scopeId1> [scopeId2 ...]
-  node console_api.mjs scopes remove <appId> <scopeId1> [scopeId2 ...]
+  node console_api.mjs scopes add <appId> <scope1> [scope2 ...]
+  node console_api.mjs scopes remove <appId> <scope1> [scope2 ...]
   node console_api.mjs scopes find <appId> <keyword>
   node console_api.mjs callbacks list <appId>
   node console_api.mjs callbacks add <appId> <cb1> [cb2 ...]
@@ -779,7 +865,7 @@ async function main() {
   node console_api.mjs version list <appId>
   node console_api.mjs version create <appId> --version <ver> --notes <notes>
   node console_api.mjs version publish <appId> --version <ver> --notes <notes>
-  node console_api.mjs app create --name <name> [--desc <desc>]
+  node console_api.mjs app create --name <name> [--desc <desc>] [--icon <path>]
   node console_api.mjs app info <appId>
   node console_api.mjs app secret <appId>
   node console_api.mjs app set-icon <appId> --icon <path>
@@ -789,6 +875,10 @@ async function main() {
   node console_api.mjs app delete <appId> [--force]
   node console_api.mjs admin stop <appId>
   node console_api.mjs admin activate <appId>
+
+A <scope> is either a scope name (im:chat.announcement:read) or its numeric ID.
+Names are resolved against the app's scope catalog; an ambiguous name lists the
+candidates instead of guessing.
 
 Options:
   --profile <dir>   Playwright profile (default: ~/.lark-console/profile)
